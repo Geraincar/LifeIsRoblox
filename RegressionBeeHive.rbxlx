@@ -1,0 +1,3792 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><External>null</External><External>nil</External><Item class="Workspace" referent="RBX00000004"><Properties><string name="Name">Workspace</string></Properties><Item class="Part" referent="RBX00000001"><Properties><string name="Name">Baseplate</string><bool name="Anchored">true</bool><bool name="CanCollide">true</bool><bool name="Locked">true</bool><Vector3 name="size"><X>512</X><Y>16</Y><Z>512</Z></Vector3><CoordinateFrame name="CFrame"><X>0</X><Y>-8</Y><Z>0</Z><R00>1</R00><R01>0</R01><R02>0</R02><R10>0</R10><R11>1</R11><R12>0</R12><R20>0</R20><R21>0</R21><R22>1</R22></CoordinateFrame><Color3uint8 name="Color3uint8">4284193356</Color3uint8><float name="Transparency">0.0</float></Properties></Item><Item class="SpawnLocation" referent="RBX00000002"><Properties><string name="Name">SpawnLocation</string><bool name="Anchored">true</bool><bool name="CanCollide">true</bool><bool name="Locked">false</bool><Vector3 name="size"><X>12</X><Y>1</Y><Z>12</Z></Vector3><CoordinateFrame name="CFrame"><X>0</X><Y>0.5</Y><Z>0</Z><R00>1</R00><R01>0</R01><R02>0</R02><R10>0</R10><R11>1</R11><R12>0</R12><R20>0</R20><R21>0</R21><R22>1</R22></CoordinateFrame><Color3uint8 name="Color3uint8">4288914085</Color3uint8><float name="Transparency">0.0</float></Properties></Item><Item class="Part" referent="RBX00000003"><Properties><string name="Name">FlowerbedAnchor</string><bool name="Anchored">true</bool><bool name="CanCollide">false</bool><bool name="Locked">false</bool><Vector3 name="size"><X>20</X><Y>1</Y><Z>12</Z></Vector3><CoordinateFrame name="CFrame"><X>0</X><Y>0.5</Y><Z>-30</Z><R00>1</R00><R01>0</R01><R02>0</R02><R10>0</R10><R11>1</R11><R12>0</R12><R20>0</R20><R21>0</R21><R22>1</R22></CoordinateFrame><Color3uint8 name="Color3uint8">4294946816</Color3uint8><float name="Transparency">0.6</float></Properties></Item></Item><Item class="Lighting" referent="RBX00000005"><Properties><string name="Name">Lighting</string></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000024"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000023"><Properties><string name="Name">Regression</string></Properties><Item class="Folder" referent="RBX0000000C"><Properties><string name="Name">Core</string></Properties><Item class="ModuleScript" referent="RBX00000006"><Properties><string name="Name">BedGeometry</string><ProtectedString name="Source"><![CDATA[--!strict
+-- BedGeometry: геометрия клумбы в координатах данных (метры). Без Roblox API.
+-- Клумба — прямоугольник [0; W] × [0; H], ось x вдоль, ось y поперёк.
+
+local BedGeometry = {}
+
+-- Отрезок прямой y = m·x + c внутри прямоугольника. Возвращает x0, y0, x1, y1 или nil.
+function BedGeometry.clipLine(m: number, c: number, W: number, H: number): (number?, number?, number?, number?)
+	local x0, x1 = 0, W
+	if math.abs(m) < 1e-12 then
+		if c < 0 or c > H then
+			return nil, nil, nil, nil
+		end
+	else
+		local xa, xb = (0 - c) / m, (H - c) / m
+		if xa > xb then
+			xa, xb = xb, xa
+		end
+		x0 = math.max(x0, xa)
+		x1 = math.min(x1, xb)
+		if x0 >= x1 then
+			return nil, nil, nil, nil
+		end
+	end
+	return x0, m * x0 + c, x1, m * x1 + c
+end
+
+-- Нить от цветка (x, y) к прямой параллельно оси y. grow ∈ [0; 1] — доля «протянутости».
+function BedGeometry.thread(x: number, y: number, yhat: number, grow: number): (number, number, number, number)
+	return x, y, x, y + (yhat - y) * grow
+end
+
+-- Квадрат ошибки: одна сторона — нить, другая — вдоль x в сторону от центра клумбы.
+-- Возвращает центр (cx, cy) и сторону (м).
+function BedGeometry.square(x: number, y: number, yhat: number, pivotX: number, grow: number): (number, number, number)
+	local side = math.abs(y - yhat) * grow
+	local dir = if x < pivotX then -1 else 1
+	local yEnd = y + (yhat - y) * grow
+	return x + dir * side / 2, (y + yEnd) / 2, side
+end
+
+-- Расстояние от точки (px, pz) до прямоугольника с полуразмерами (hx, hz) с центром в нуле
+function BedGeometry.distToRect(px: number, pz: number, hx: number, hz: number): number
+	local dx = math.max(math.abs(px) - hx, 0)
+	local dz = math.max(math.abs(pz) - hz, 0)
+	return math.sqrt(dx * dx + dz * dz)
+end
+
+-- Отрезок в прямоугольнике [xMin; xMax] × [yMin; yMax] (Лян — Барски). Для графиков на табло.
+function BedGeometry.clipSegment(
+	x0: number, y0: number, x1: number, y1: number,
+	xMin: number, xMax: number, yMin: number, yMax: number
+): (number?, number?, number?, number?)
+	local dx, dy = x1 - x0, y1 - y0
+	local t0, t1 = 0, 1
+	local p = { -dx, dx, -dy, dy }
+	local q = { x0 - xMin, xMax - x0, y0 - yMin, yMax - y0 }
+	for i = 1, 4 do
+		if p[i] == 0 then
+			if q[i] < 0 then
+				return nil, nil, nil, nil
+			end
+		else
+			local t = q[i] / p[i]
+			if p[i] < 0 then
+				if t > t1 then return nil, nil, nil, nil end
+				if t > t0 then t0 = t end
+			else
+				if t < t0 then return nil, nil, nil, nil end
+				if t < t1 then t1 = t end
+			end
+		end
+	end
+	return x0 + t0 * dx, y0 + t0 * dy, x0 + t1 * dx, y0 + t1 * dy
+end
+
+return BedGeometry
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000007"><Properties><string name="Name">Config</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Config: все числовые константы 3D experience в одном месте.
+
+return {
+	STUDS_PER_M = 4, -- 1 м данных = 4 studs: клумба 5 × 3 м = 20 × 12 studs
+
+	-- Прямая
+	SLOPE_MIN = -1,
+	SLOPE_MAX = 1.5,
+	H_MIN = 0,
+	H_MAX = 3,
+	H_STEP = 0.05, -- высота «защёлкивается» на сетку 0,05 м при отпускании Shift/Ctrl
+	ANGLE_SPEED_DEG = 20, -- Q/E: град/с
+	H_SPEED = 0.5, -- Shift/Ctrl: м/с
+
+	-- Шаги
+	ZONE_STUDS = 10, -- табло оживает, когда игрок ближе 10 studs к клумбе
+	MANUAL_THREADS_BEFORE_AUTO = 2, -- после 2 ручных нитей — кнопка «протянуть остальные»
+	SNAP_TOL = 0.03, -- 3D.5: прилипание к m*
+	BEST_H = 1.5, -- 3D.5 бонус: высота лучшей прямой (= ȳ)
+	ONE_SIDE_CHECK_AFTER = 4, -- после 4-й записи проверка «все по одну сторону»
+
+	-- Анимации (все ≤ 3 с, переходы ≤ 0,6 с)
+	THREAD_GROW_S = 0.5,
+	SQUARE_GROW_S = 0.6,
+	BOARD2_RISE_S = 1.8,
+
+	-- Подсказки и UI
+	HINT_IDLE_S = 45,
+	UI_HZ = 30,
+	TOAST_S = 3,
+}
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000008"><Properties><string name="Name">Format</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Format: числа для UI. Десятичная запятая, неразрывный пробел перед единицей,
+-- типографский минус, явный знак у ошибок. Без Roblox API (тестируется standalone).
+
+local Format = {}
+
+Format.NBSP = "\u{00A0}"
+Format.MINUS = "\u{2212}"
+
+function Format.num(x: number, digits: number?): string
+	local d = digits or 2
+	local s = string.format("%." .. d .. "f", x)
+	if tonumber(s) == 0 then
+		s = string.format("%." .. d .. "f", 0) -- без «−0,00»
+	end
+	s = (s:gsub("%.", ","))
+	s = (s:gsub("^%-", Format.MINUS))
+	return s
+end
+
+-- Со знаком: +0,26 / −0,37 / 0,00
+function Format.signed(x: number, digits: number?): string
+	local s = Format.num(x, digits)
+	local d = digits or 2
+	local r = tonumber(string.format("%." .. d .. "f", x)) or 0
+	if r > 0 then
+		return "+" .. s
+	end
+	return s
+end
+
+function Format.unit(x: number, digits: number?, unit: string): string
+	return Format.num(x, digits) .. Format.NBSP .. unit
+end
+
+-- Коэффициенты (наклон m): 2 знака на табло, сравнение точности — в логике
+function Format.coef(x: number): string
+	return Format.num(x, 2)
+end
+
+function Format.len(x: number): string
+	return Format.unit(x, 2, "м")
+end
+
+function Format.area(x: number): string
+	return Format.unit(x, 2, "м²")
+end
+
+function Format.mse(x: number): string
+	return Format.unit(x, 3, "м²")
+end
+
+function Format.lambda(x: number): string
+	if x == 0 then
+		return "0"
+	end
+	return Format.num(x, 1)
+end
+
+function Format.percent(share: number): string
+	return Format.unit(share * 100, 1, "%")
+end
+
+return Format
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000009"><Properties><string name="Name">LineModel</string><ProtectedString name="Source"><![CDATA[--!strict
+-- LineModel: всё, что табло и клумба показывают о прямой y = m·x + c. Числа — только из MathCore.
+-- Прямая вращается вокруг точки (x̄; h) — центра клумбы, поэтому c = h − x̄·m.
+
+export type Snapshot = {
+	m: number, h: number, c: number,
+	yhat: { number }, e: { number }, sq: { number },
+	L: number, mse: number, n: number,
+}
+
+local LineModel = {}
+LineModel.__index = LineModel
+
+function LineModel.new(MathCore: any, fb: any)
+	local self = setmetatable({}, LineModel)
+	self.MathCore = MathCore
+	self.x = fb.x_m :: { number }
+	self.y = fb.y_m :: { number }
+	self.n = #fb.x_m
+	self.pivotX = fb.pivot_x_m :: number
+	self.W = fb.bed_length_m :: number
+	self.H = fb.bed_width_m :: number
+	local o = MathCore.ols1d(self.x, self.y)
+	self.mOpt = o.b1 :: number -- 0,33
+	self.cOpt = o.b0 :: number -- 0,675
+	self.hOpt = (o.b0 + o.b1 * self.pivotX) :: number -- = ȳ = 1,5
+	return self
+end
+
+function LineModel.compute(self: any, m: number, h: number): Snapshot
+	local MathCore = self.MathCore
+	local c = MathCore.lineFromPivot(m, h, self.pivotX)
+	local yhat, e, sq = table.create(self.n), table.create(self.n), table.create(self.n)
+	for i = 1, self.n do
+		yhat[i] = m * self.x[i] + c
+		e[i] = self.y[i] - yhat[i]
+		sq[i] = e[i] * e[i]
+	end
+	local mse = MathCore.mseLine(self.x, self.y, m, c)
+	return { m = m, h = h, c = c, yhat = yhat, e = e, sq = sq, L = mse * self.n, mse = mse, n = self.n }
+end
+
+return LineModel
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000A"><Properties><string name="Name">Records</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Records: записи (m, MSE) на табло. Без Roblox API.
+-- Правила из раскадровки 3D.4: 5 записей на одной высоте, наклоны различаются не меньше чем на 0,1.
+
+export type Record = { m: number, mse: number, h: number }
+
+local Records = {}
+
+Records.NEED = 5
+Records.MIN_DM = 0.1
+Records.H_TOL = 1e-3 -- высота дискретна (шаг 0,05 м), так что допуск только на погрешность float
+Records.MAX_TOTAL = 20
+
+function Records.sameHeight(a: number, b: number): boolean
+	return math.abs(a - b) < Records.H_TOL
+end
+
+function Records.atHeight(list: { Record }, h: number): { Record }
+	local out = {}
+	for _, r in list do
+		if Records.sameHeight(r.h, h) then
+			table.insert(out, r)
+		end
+	end
+	return out
+end
+
+-- ok, reason ("full" | "too_close"), конфликтующая запись
+function Records.validate(list: { Record }, m: number, h: number): (boolean, string?, Record?)
+	local cur = Records.atHeight(list, h)
+	if #cur >= Records.NEED then
+		return false, "full", nil
+	end
+	for _, r in cur do
+		if math.abs(r.m - m) < Records.MIN_DM - 1e-9 then
+			return false, "too_close", r
+		end
+	end
+	return true, nil, nil
+end
+
+-- Добавляет запись в новый список (старый не меняется — удобно для Store).
+-- Если записей слишком много, выбрасывает самые старые записи других высот.
+function Records.add(list: { Record }, rec: Record): { Record }
+	local out = table.clone(list)
+	table.insert(out, rec)
+	local i = 1
+	while #out > Records.MAX_TOTAL and i <= #out do
+		if not Records.sameHeight(out[i].h, rec.h) then
+			table.remove(out, i)
+		else
+			i += 1
+		end
+	end
+	return out
+end
+
+-- Все записи по одну сторону от mOpt (подсказка «попробуй наклон в другую сторону»)
+function Records.oneSide(list: { Record }, mOpt: number): boolean
+	if #list == 0 then
+		return false
+	end
+	local below, above = 0, 0
+	for _, r in list do
+		if r.m < mOpt then below += 1 else above += 1 end
+	end
+	return below == 0 or above == 0
+end
+
+-- Парабола по записям: MathCore передаётся снаружи, чтобы модуль оставался чистым
+function Records.fit(MathCore: any, list: { Record })
+	local t, v = {}, {}
+	for i, r in list do
+		t[i], v[i] = r.m, r.mse
+	end
+	return MathCore.fitParabola(t, v)
+end
+
+return Records
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000B"><Properties><string name="Name">Store</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Store: плоское состояние модуля + подписки по ключам. Без Roblox API.
+--   store:get(key), store:set(key, value), store:patch({...})
+--   store.Changed:Connect(key, fn)  → { Disconnect = fn }; key "*" — любые изменения
+-- Таблицы (records, threads) заменяются целиком, а не мутируются, — так подписчики не пропустят изменение.
+
+local Store = {}
+Store.__index = Store
+
+local PERSISTENT = { "m", "h", "scene", "threads", "records", "parabola", "honey", "predictions" }
+
+function Store.new(initial: { [string]: any }?)
+	local self = setmetatable({}, Store)
+	self.state = table.clone(initial or {}) :: { [string]: any }
+	self.listeners = {} :: { [string]: { (any, string) -> () } }
+	local store = self
+	self.Changed = {
+		Connect = function(_, key: string, fn: (any, string) -> ())
+			local list = store.listeners[key]
+			if not list then
+				list = {}
+				store.listeners[key] = list
+			end
+			table.insert(list, fn)
+			return {
+				Disconnect = function()
+					local i = table.find(list, fn)
+					if i then
+						table.remove(list, i)
+					end
+				end,
+			}
+		end,
+	}
+	return self
+end
+
+function Store.get(self: any, key: string): any
+	return self.state[key]
+end
+
+function Store.set(self: any, key: string, value: any)
+	if self.state[key] == value and type(value) ~= "table" then
+		return
+	end
+	self.state[key] = value
+	for _, k in { key, "*" } do
+		local list = self.listeners[k]
+		if list then
+			for _, fn in (table.clone(list) :: { (any, string) -> () }) do
+				fn(value, key)
+			end
+		end
+	end
+end
+
+function Store.patch(self: any, t: { [string]: any })
+	for k, v in t do
+		self:set(k, v)
+	end
+end
+
+-- Для будущего DataStore (вне рамок ТЗ): только то, что нужно восстановить
+function Store.serialize(self: any): { [string]: any }
+	local out = {}
+	for _, k in PERSISTENT do
+		local v = self.state[k]
+		out[k] = if type(v) == "table" then table.clone(v) else v
+	end
+	return out
+end
+
+return Store
+]]></ProtectedString></Properties></Item></Item><Item class="Folder" referent="RBX0000000F"><Properties><string name="Name">Data</string></Properties><Item class="ModuleScript" referent="RBX0000000D"><Properties><string name="Name">Datasets</string><ProtectedString name="Source"><![CDATA[-- Сгенерировано scripts/json_to_luau.py из assets/datasets.json. Не редактировать вручную.
+return {
+	flowerbed = {
+		x_m = {0.5, 1.5, 2.5, 3.5, 4.5},
+		y_m = {1.1, 0.8, 1.3, 2.3, 2.0},
+		bed_length_m = 5.0,
+		bed_width_m = 3.0,
+		pivot_x_m = 2.5,
+		start_line = {
+			m = 0.0,
+			h = 1.0,
+		},
+	},
+	intercept_demo = {
+		bees_k = {20, 30, 40, 50, 60},
+		honey_kg = {17, 17, 26, 32, 33},
+		fixed_slope = 0.47,
+	},
+	small_sample = {
+		seed = 12,
+		rows = {
+			{
+				point = 1,
+				sample = "first5",
+				bees_k = 33.0,
+				temperature_C = 18.0,
+				honey_kg = 23.5,
+			},
+			{
+				point = 2,
+				sample = "first5",
+				bees_k = 54.5,
+				temperature_C = 29.0,
+				honey_kg = 30.5,
+			},
+			{
+				point = 3,
+				sample = "first5",
+				bees_k = 28.0,
+				temperature_C = 17.0,
+				honey_kg = 17.5,
+			},
+			{
+				point = 4,
+				sample = "first5",
+				bees_k = 25.0,
+				temperature_C = 17.0,
+				honey_kg = 14.0,
+			},
+			{
+				point = 5,
+				sample = "first5",
+				bees_k = 32.5,
+				temperature_C = 19.5,
+				honey_kg = 21.0,
+			},
+			{
+				point = 6,
+				sample = "rest",
+				bees_k = 28.5,
+				temperature_C = 17.5,
+				honey_kg = 18.5,
+			},
+			{
+				point = 7,
+				sample = "rest",
+				bees_k = 41.0,
+				temperature_C = 24.5,
+				honey_kg = 26.0,
+			},
+			{
+				point = 8,
+				sample = "rest",
+				bees_k = 21.5,
+				temperature_C = 16.0,
+				honey_kg = 14.5,
+			},
+			{
+				point = 9,
+				sample = "rest",
+				bees_k = 50.5,
+				temperature_C = 28.5,
+				honey_kg = 30.5,
+			},
+			{
+				point = 10,
+				sample = "rest",
+				bees_k = 46.5,
+				temperature_C = 27.5,
+				honey_kg = 33.0,
+			},
+			{
+				point = 11,
+				sample = "rest",
+				bees_k = 17.0,
+				temperature_C = 14.0,
+				honey_kg = 14.5,
+			},
+			{
+				point = 12,
+				sample = "rest",
+				bees_k = 36.5,
+				temperature_C = 22.5,
+				honey_kg = 22.0,
+			},
+			{
+				point = 13,
+				sample = "rest",
+				bees_k = 20.0,
+				temperature_C = 15.5,
+				honey_kg = 17.5,
+			},
+			{
+				point = 14,
+				sample = "rest",
+				bees_k = 30.0,
+				temperature_C = 18.0,
+				honey_kg = 19.5,
+			},
+			{
+				point = 15,
+				sample = "rest",
+				bees_k = 28.5,
+				temperature_C = 20.5,
+				honey_kg = 20.5,
+			},
+		},
+	},
+	lore = {
+		seed = 9,
+		features = {"distance_to_meadow_m", "bees_k", "temperature_C"},
+		lambda_given = 2.5,
+		plausible_range_kg = {20.0, 40.0},
+		train_apiaries = {
+			{
+				apiary = 1,
+				distance_to_meadow_m = 1070.0,
+				bees_k = 48.5,
+				temperature_C = 28.0,
+				honey_kg = 34.5,
+			},
+			{
+				apiary = 2,
+				distance_to_meadow_m = 320.0,
+				bees_k = 32.0,
+				temperature_C = 19.5,
+				honey_kg = 29.0,
+			},
+			{
+				apiary = 3,
+				distance_to_meadow_m = 210.0,
+				bees_k = 41.5,
+				temperature_C = 24.0,
+				honey_kg = 39.0,
+			},
+			{
+				apiary = 4,
+				distance_to_meadow_m = 1700.0,
+				bees_k = 45.5,
+				temperature_C = 26.5,
+				honey_kg = 26.5,
+			},
+			{
+				apiary = 5,
+				distance_to_meadow_m = 1970.0,
+				bees_k = 42.0,
+				temperature_C = 25.5,
+				honey_kg = 25.5,
+			},
+		},
+		player_hives = {
+			{
+				hive = 1,
+				distance_to_meadow_m = 870.0,
+				bees_k = 29.0,
+				temperature_C = 19.0,
+				honey_kg = 24.5,
+			},
+			{
+				hive = 2,
+				distance_to_meadow_m = 1290.0,
+				bees_k = 48.5,
+				temperature_C = 26.5,
+				honey_kg = 32.5,
+			},
+			{
+				hive = 3,
+				distance_to_meadow_m = 1060.0,
+				bees_k = 52.0,
+				temperature_C = 30.0,
+				honey_kg = 37.5,
+			},
+			{
+				hive = 4,
+				distance_to_meadow_m = 1630.0,
+				bees_k = 56.0,
+				temperature_C = 30.0,
+				honey_kg = 34.5,
+			},
+			{
+				hive = 5,
+				distance_to_meadow_m = 550.0,
+				bees_k = 46.5,
+				temperature_C = 28.0,
+				honey_kg = 37.0,
+			},
+		},
+	},
+}
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000E"><Properties><string name="Name">ExpectedValues</string><ProtectedString name="Source"><![CDATA[-- Сгенерировано scripts/json_to_luau.py из assets/expected_values.json. Не редактировать вручную.
+return {
+	flowerbed = {
+		ols = {
+			m = 0.33,
+			c = 0.675,
+			L = 0.491,
+			mse = 0.0982,
+		},
+		mse_examples = {
+			{
+				m = 0.0,
+				h = 1.0,
+				mse = 0.566,
+			},
+			{
+				m = 0.33,
+				h = 1.5,
+				mse = 0.0982,
+			},
+			{
+				m = 0.5,
+				h = 1.2,
+				mse = 0.246,
+			},
+			{
+				m = -0.3,
+				h = 2.0,
+				mse = 1.142,
+			},
+			{
+				m = 1.0,
+				h = 1.5,
+				mse = 0.996,
+			},
+		},
+		recording_example = {
+			h = 1.0,
+			m = {-0.2, 0.0, 0.2, 0.5, 0.8},
+			mse = {0.91, 0.566, 0.382, 0.406, 0.79},
+			parabola = {
+				a = 2.0,
+				b = -1.32,
+				k = 0.566,
+				m_star = 0.33,
+				mse_star = 0.3482,
+			},
+		},
+		residuals_at_ols = {0.26, -0.37, -0.2, 0.47, -0.16},
+		ridge_m = {
+			["0"] = 0.33,
+			["1"] = 0.3,
+			["5"] = 0.22,
+			["10"] = 0.165,
+			["50"] = 0.055,
+		},
+		lasso_m = {
+			["0"] = 0.33,
+			["1"] = 0.28,
+			["3.3"] = 0.165,
+			["6"] = 0.03,
+			["6.6"] = 0.0,
+			["10"] = 0.0,
+		},
+		penalized_loss = {
+			["l2_0_0.0"] = 1.58,
+			["l2_0_0.2"] = 0.66,
+			["l2_0_0.33"] = 0.491,
+			["l2_2_0.0"] = 1.58,
+			["l2_2_0.2"] = 0.74,
+			["l2_2_0.33"] = 0.7088,
+			["l2_6_0.0"] = 1.58,
+			["l2_6_0.2"] = 0.9,
+			["l2_6_0.33"] = 1.1444,
+			["l1_0_0.0"] = 1.58,
+			["l1_0_0.2"] = 0.66,
+			["l1_0_0.33"] = 0.491,
+			["l1_2_0.0"] = 1.58,
+			["l1_2_0.2"] = 1.06,
+			["l1_2_0.33"] = 1.151,
+			["l1_6_0.0"] = 1.58,
+			["l1_6_0.2"] = 1.86,
+			["l1_6_0.33"] = 2.471,
+		},
+	},
+	intercept_demo = {
+		ols = {
+			m = 0.47,
+			c = 6.2,
+		},
+		recording_example = {
+			c = {0.0, 3.0, 6.0, 9.0, 12.0},
+			mse = {42.66, 14.46, 4.26, 12.06, 37.86},
+			c_star = 6.2,
+			mse_star = 4.22,
+		},
+		r2 = {
+			ss_res = 21.1,
+			ss_tot = 242.0,
+			mean = 25.0,
+			r2 = 0.91281,
+		},
+	},
+	small_sample = {
+		mean_first5 = {34.6, 20.1},
+		sd_first5 = {10.379788, 4.543127},
+		corr_first5 = 0.983742,
+		ols_first5 = {
+			b0 = 21.3,
+			coefs = {14.313229, -9.156597},
+			r2_first5 = 0.98069,
+			r2_rest = 0.143706,
+		},
+		ols_all15_r2 = 0.900478,
+		ridge = {
+			["1"] = {
+				b0 = 21.3,
+				coefs = {3.224414, 1.459943},
+				r2_first5 = 0.851921,
+				r2_rest = 0.876838,
+			},
+			["3"] = {
+				b0 = 21.3,
+				coefs = {2.289171, 1.66998},
+				r2_first5 = 0.800558,
+				r2_rest = 0.83898,
+			},
+			["10"] = {
+				b0 = 21.3,
+				coefs = {1.378523, 1.18927},
+				r2_first5 = 0.629339,
+				r2_rest = 0.654674,
+			},
+		},
+		lasso = {
+			["1.5"] = {
+				b0 = 21.3,
+				coefs = {5.155503, -0.0},
+				r2_first5 = 0.89402,
+				r2_rest = 0.83786,
+			},
+			["5"] = {
+				b0 = 21.3,
+				coefs = {4.805503, 0.0},
+				r2_first5 = 0.886788,
+				r2_rest = 0.833823,
+			},
+			["15"] = {
+				b0 = 21.3,
+				coefs = {3.805503, 0.0},
+				r2_first5 = 0.823216,
+				r2_rest = 0.779687,
+			},
+		},
+	},
+	lore = {
+		mean_train = {1054.0, 41.9, 24.7},
+		sd_train = {708.197713, 5.562374, 2.908608},
+		lasso = {
+			lambda = 2.5,
+			b0 = 30.9,
+			coefs = {-5.11918, 3.207252, 0.0},
+			coefs_raw_units = {-0.007228, 0.576598, 0.0},
+			predictions = {24.791927, 32.999628, 36.680266, 34.866434, 37.195494},
+			r2_player = 0.989356,
+		},
+		ols = {
+			b0 = 30.9,
+			coefs = {-7.880889, -10.276943, 15.304331},
+			r2_player = -0.778024,
+		},
+	},
+}
+]]></ProtectedString></Properties></Item></Item><Item class="Folder" referent="RBX00000011"><Properties><string name="Name">Input</string></Properties><Item class="ModuleScript" referent="RBX00000010"><Properties><string name="Name">LineControls</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- LineControls: режим управления прямой.
+--   Q/E — наклон (угол ±20°/с, m = tan угла), Shift/Ctrl — высота h (0,5 м/с, при отпускании — на сетку 0,05 м),
+--   R — записать, X — выйти. Геймпад: R1/L1 — наклон, R2/L2 — высота, X — запись, B — выход.
+--   Телефон и мышь: кнопки пульта в Hud (удержание = непрерывное изменение).
+-- ContextActionService с приоритетом High и Sink: клавиши не уходят персонажу и shift-lock.
+-- На время режима: движение персонажа выключено, shift-lock запрещён, ProximityPrompt'ы клумбы выключены.
+
+local Players = game:GetService("Players")
+local ContextActionService = game:GetService("ContextActionService")
+local UserInputService = game:GetService("UserInputService")
+
+local Regression = script.Parent.Parent
+local Config = require(Regression.Core.Config)
+
+local LineControls = {}
+LineControls.__index = LineControls
+
+local PRIORITY = Enum.ContextActionPriority.High.Value
+local ANGLE_MIN = math.atan(Config.SLOPE_MIN)
+local ANGLE_MAX = math.atan(Config.SLOPE_MAX)
+
+-- args: store, hud, prompts (список ProximityPrompt, которые глушить), onRecord, onExit
+function LineControls.new(args)
+	local self = setmetatable({}, LineControls)
+	self.store = args.store
+	self.hud = args.hud
+	self.prompts = args.prompts or {}
+	self.onRecord = args.onRecord
+	self.held = { slopeUp = false, slopeDown = false, up = false, down = false }
+	self.active = false
+	self.savedPrompts = {}
+
+	for name in self.held do
+		self.hud.padHandlers[name] = function(down: boolean)
+			self.held[name] = down
+		end
+	end
+	self.hud.padHandlers.record = function()
+		self:record()
+	end
+	self.hud.padHandlers.exit = function()
+		self:exit()
+	end
+
+	local player = Players.LocalPlayer
+	task.spawn(function()
+		local ok, pm = pcall(function()
+			local pm: any = player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule")
+			return (require :: any)(pm)
+		end)
+		if ok and pm then
+			self.controls = pm:GetControls()
+		end
+	end)
+	player.CharacterAdded:Connect(function()
+		if self.active then
+			self:exit()
+		end
+	end)
+	return self
+end
+
+function LineControls:record()
+	if self.active and self.store:get("recordEnabled") and self.onRecord then
+		self.onRecord()
+	end
+end
+
+function LineControls:enter()
+	if self.active or not self.store:get("controlUnlocked") then
+		return
+	end
+	self.active = true
+	self.store:set("controlMode", true)
+
+	local function holdAction(name: string)
+		return function(_, state: Enum.UserInputState)
+			if state == Enum.UserInputState.Begin then
+				self.held[name] = true
+			elseif state == Enum.UserInputState.End or state == Enum.UserInputState.Cancel then
+				self.held[name] = false
+			end
+			return Enum.ContextActionResult.Sink
+		end
+	end
+	ContextActionService:BindActionAtPriority("RegSlopeUp", holdAction("slopeUp"), false, PRIORITY, Enum.KeyCode.Q, Enum.KeyCode.ButtonR1)
+	ContextActionService:BindActionAtPriority("RegSlopeDown", holdAction("slopeDown"), false, PRIORITY, Enum.KeyCode.E, Enum.KeyCode.ButtonL1)
+	ContextActionService:BindActionAtPriority("RegUp", holdAction("up"), false, PRIORITY, Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift, Enum.KeyCode.ButtonR2)
+	ContextActionService:BindActionAtPriority("RegDown", holdAction("down"), false, PRIORITY, Enum.KeyCode.LeftControl, Enum.KeyCode.RightControl, Enum.KeyCode.ButtonL2)
+	ContextActionService:BindActionAtPriority("RegRecord", function(_, state)
+		if state == Enum.UserInputState.Begin then
+			self:record()
+		end
+		return Enum.ContextActionResult.Sink
+	end, false, PRIORITY, Enum.KeyCode.R, Enum.KeyCode.ButtonX)
+	ContextActionService:BindActionAtPriority("RegExit", function(_, state)
+		if state == Enum.UserInputState.Begin then
+			task.defer(function()
+				self:exit()
+			end)
+		end
+		return Enum.ContextActionResult.Sink
+	end, false, PRIORITY, Enum.KeyCode.X, Enum.KeyCode.ButtonB)
+
+	local player = Players.LocalPlayer
+	self.savedMouseLock = player.DevEnableMouseLock
+	pcall(function()
+		player.DevEnableMouseLock = false
+	end)
+	if self.controls then
+		self.controls:Disable()
+	end
+	self.savedPrompts = {}
+	for _, p in self.prompts do
+		self.savedPrompts[p] = p.Enabled
+		p.Enabled = false
+	end
+	self.hud:showPad(true, UserInputService.KeyboardEnabled, self.store:get("recordEnabled") == true)
+end
+
+function LineControls:exit()
+	if not self.active then
+		return
+	end
+	self.active = false
+	for _, name in { "RegSlopeUp", "RegSlopeDown", "RegUp", "RegDown", "RegRecord", "RegExit" } do
+		ContextActionService:UnbindAction(name)
+	end
+	for k in self.held do
+		self.held[k] = false
+	end
+	pcall(function()
+		Players.LocalPlayer.DevEnableMouseLock = self.savedMouseLock
+	end)
+	if self.controls then
+		self.controls:Enable()
+	end
+	for p, was in self.savedPrompts do
+		p.Enabled = was
+	end
+	self.savedPrompts = {}
+	self:_snapHeight()
+	self.hud:showPad(false, false, false)
+	self.store:set("controlMode", false)
+end
+
+-- Подсказку можно включить/выключить снаружи, пока режим активен (например, сцена включила новые промпты)
+function LineControls:setPromptWanted(p: ProximityPrompt, enabled: boolean)
+	if self.active and self.savedPrompts[p] ~= nil then
+		self.savedPrompts[p] = enabled
+	else
+		p.Enabled = enabled
+	end
+end
+
+function LineControls:_snapHeight()
+	local h = self.store:get("h")
+	local snapped = math.clamp(math.round(h / Config.H_STEP) * Config.H_STEP, Config.H_MIN, Config.H_MAX)
+	if math.abs(snapped - h) > 1e-9 then
+		self.store:set("h", snapped)
+	end
+end
+
+-- Вызывать каждый кадр
+function LineControls:step(dt: number)
+	if not self.active then
+		return
+	end
+	local st = self.store
+	local held = self.held
+	self.hud:showPad(true, UserInputService.KeyboardEnabled, st:get("recordEnabled") == true)
+
+	local dirA = (if held.slopeUp then 1 else 0) - (if held.slopeDown then 1 else 0)
+	if dirA ~= 0 then
+		local a = math.clamp(math.atan(st:get("m")) + dirA * math.rad(Config.ANGLE_SPEED_DEG) * dt, ANGLE_MIN, ANGLE_MAX)
+		st:set("m", math.tan(a))
+		st:set("movedSlope", true)
+		self.slopeWasHeld = true
+	elseif self.slopeWasHeld then
+		self.slopeWasHeld = false
+		-- прилипание к цели (3D.5), только когда клавиша отпущена
+		local snap = st:get("mSnap")
+		if snap and math.abs(st:get("m") - snap.target) < snap.tol then
+			st:set("m", snap.target)
+		end
+	end
+
+	local dirH = (if held.up then 1 else 0) - (if held.down then 1 else 0)
+	if dirH ~= 0 then
+		st:set("h", math.clamp(st:get("h") + dirH * Config.H_SPEED * dt, Config.H_MIN, Config.H_MAX))
+		st:set("movedHeight", true)
+		self.heightWasHeld = true
+	elseif self.heightWasHeld then
+		self.heightWasHeld = false
+		self:_snapHeight()
+	end
+end
+
+return LineControls
+]]></ProtectedString></Properties></Item></Item><Item class="ModuleScript" referent="RBX00000012"><Properties><string name="Name">MathCore</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- MathCore: чистая математика регрессионного модуля «Улей». Без Roblox API —
+-- запускается и в Studio, и в standalone luau (для автотестов).
+-- Соглашения совпадают с scripts/reference_math.py:
+--   L = Σe² (сумма, не среднее); Ridge: + λΣb²; Lasso: + λΣ|b|; b₀ не штрафуется;
+--   стандартизация sd с делением на n, mean/sd только по train.
+
+export type Vector = { number }
+export type Matrix = { Vector } -- Matrix[i] — строка i (наблюдение)
+
+local MathCore = {}
+
+function MathCore.mean(v: Vector): number
+	local s = 0
+	for _, x in v do s += x end
+	return s / #v
+end
+
+function MathCore.column(X: Matrix, j: number): Vector
+	local c = table.create(#X)
+	for i, row in X do c[i] = row[j] end
+	return c
+end
+
+-- Одномерная МНК: возвращает b0, b1 и промежуточные суммы для формул UI
+function MathCore.ols1d(x: Vector, y: Vector)
+	local n = #x
+	local xm, ym = MathCore.mean(x), MathCore.mean(y)
+	local sxx, sxy, syy = 0, 0, 0
+	for i = 1, n do
+		local dx, dy = x[i] - xm, y[i] - ym
+		sxx += dx * dx; sxy += dx * dy; syy += dy * dy
+	end
+	local b1 = sxy / sxx
+	return {
+		b0 = ym - b1 * xm, b1 = b1, n = n, xMean = xm, yMean = ym,
+		sxx = sxx, sxy = sxy, syy = syy,
+	}
+end
+
+-- Сумма квадратов остатков для прямой
+function MathCore.sse1d(x: Vector, y: Vector, b0: number, b1: number): number
+	local s = 0
+	for i = 1, #x do
+		local e = y[i] - (b0 + b1 * x[i])
+		s += e * e
+	end
+	return s
+end
+
+-- MSE прямой y = m·x + c (табло в 3D показывает MSE = L/n)
+function MathCore.mseLine(x: Vector, y: Vector, m: number, c: number): number
+	return MathCore.sse1d(x, y, c, m) / #x
+end
+
+-- Прямая вращается вокруг точки (pivotX, h): свободный член
+function MathCore.lineFromPivot(m: number, h: number, pivotX: number): number
+	return h - m * pivotX
+end
+
+-- МНК-парабола v ≈ a·t² + b·t + k по записанным точкам (≥ 3 разных t).
+-- Возвращает a, b, k и вершину (tStar, vStar). Для MSE при фиксированной высоте подгонка точная.
+function MathCore.fitParabola(t: Vector, v: Vector)
+	local S = table.create(5, 0) -- Σt^0..Σt^4
+	local T = table.create(3, 0) -- Σv·t^0..Σv·t^2
+	for i = 1, #t do
+		local p = 1
+		for k = 1, 5 do
+			S[k] += p
+			if k <= 3 then T[k] += v[i] * p end
+			p *= t[i]
+		end
+	end
+	-- нормальные уравнения для (k, b, a)
+	local A = {
+		{ S[1], S[2], S[3] },
+		{ S[2], S[3], S[4] },
+		{ S[3], S[4], S[5] },
+	}
+	local sol = MathCore._solve(A, { T[1], T[2], T[3] })
+	local k, b, a = sol[1], sol[2], sol[3]
+	local ts = -b / (2 * a)
+	return { a = a, b = b, k = k, tStar = ts, vStar = a * ts * ts + b * ts + k }
+end
+
+-- Сумма квадратов остатков при оптимальном c (= ȳ − m·x̄) плюс штраф; kind = "l2" | "l1"
+function MathCore.penalizedLoss1d(x: Vector, y: Vector, m: number, lambda: number, kind: string): number
+	local c = MathCore.mean(y) - m * MathCore.mean(x)
+	return MathCore.sse1d(x, y, c, m) + lambda * (if kind == "l2" then m * m else math.abs(m))
+end
+
+function MathCore.standardize(X: Matrix, means: Vector?, sds: Vector?): (Matrix, Vector, Vector)
+	local p = #X[1]
+	local m: Vector, s: Vector
+	if means and sds then
+		m, s = means, sds
+	else
+		m, s = table.create(p), table.create(p)
+		for j = 1, p do
+			local col = MathCore.column(X, j)
+			local mu = MathCore.mean(col)
+			local v = 0
+			for _, x in col do v += (x - mu) ^ 2 end
+			m[j], s[j] = mu, math.sqrt(v / #col)
+		end
+	end
+	local Z: Matrix = table.create(#X)
+	for i, row in X do
+		local r = table.create(p)
+		for j = 1, p do r[j] = (row[j] - m[j]) / s[j] end
+		Z[i] = r
+	end
+	return Z, m, s
+end
+
+local function centered(X: Matrix, y: Vector): (Matrix, Vector, Vector, number)
+	local n, p = #X, #X[1]
+	local xm = table.create(p, 0)
+	for _, row in X do for j = 1, p do xm[j] += row[j] / n end end
+	local ym = MathCore.mean(y)
+	local Xc: Matrix, yc: Vector = table.create(n), table.create(n)
+	for i, row in X do
+		local r = table.create(p)
+		for j = 1, p do r[j] = row[j] - xm[j] end
+		Xc[i], yc[i] = r, y[i] - ym
+	end
+	return Xc, yc, xm, ym
+end
+
+-- Решение A·b = c методом Гаусса с выбором ведущего элемента
+local function solve(A: Matrix, c: Vector): Vector
+	local p = #c
+	local M: Matrix = table.create(p)
+	for i = 1, p do
+		local r = table.clone(A[i]); r[p + 1] = c[i]; M[i] = r
+	end
+	for k = 1, p do
+		local piv = k
+		for i = k + 1, p do if math.abs(M[i][k]) > math.abs(M[piv][k]) then piv = i end end
+		M[k], M[piv] = M[piv], M[k]
+		for i = k + 1, p do
+			local f = M[i][k] / M[k][k]
+			for j = k, p + 1 do M[i][j] -= f * M[k][j] end
+		end
+	end
+	local b = table.create(p, 0)
+	for i = p, 1, -1 do
+		local s = M[i][p + 1]
+		for j = i + 1, p do s -= M[i][j] * b[j] end
+		b[i] = s / M[i][i]
+	end
+	return b
+end
+
+MathCore._solve = solve
+
+local function intercept(xm: Vector, ym: number, b: Vector): number
+	local s = ym
+	for j = 1, #b do s -= xm[j] * b[j] end
+	return s
+end
+
+-- Ridge (λ = 0 → обычная МНК). Xs — уже стандартизованные признаки.
+function MathCore.ridge(Xs: Matrix, y: Vector, lambda: number): (number, Vector)
+	local Xc, yc, xm, ym = centered(Xs, y)
+	local p = #Xc[1]
+	local A: Matrix, c: Vector = table.create(p), table.create(p, 0)
+	for a = 1, p do
+		A[a] = table.create(p, 0)
+		for b = 1, p do
+			local s = 0
+			for i = 1, #Xc do s += Xc[i][a] * Xc[i][b] end
+			A[a][b] = s + (if a == b then lambda else 0)
+		end
+		for i = 1, #Xc do c[a] += Xc[i][a] * yc[i] end
+	end
+	local b = solve(A, c)
+	return intercept(xm, ym, b), b
+end
+
+function MathCore.ols(Xs: Matrix, y: Vector): (number, Vector)
+	return MathCore.ridge(Xs, y, 0)
+end
+
+-- Lasso координатным спуском: b_j = S(ρ_j, λ/2) / Σx_j²
+function MathCore.lasso(Xs: Matrix, y: Vector, lambda: number, maxIter: number?, tol: number?): (number, Vector)
+	local Xc, yc, xm, ym = centered(Xs, y)
+	local n, p = #Xc, #Xc[1]
+	local b = table.create(p, 0)
+	local z = table.create(p, 0)
+	for j = 1, p do for i = 1, n do z[j] += Xc[i][j] ^ 2 end end
+	local r = table.clone(yc) -- остатки при b = 0
+	for _ = 1, maxIter or 5000 do
+		local maxDelta = 0
+		for j = 1, p do
+			local rho = 0
+			for i = 1, n do rho += Xc[i][j] * (r[i] + Xc[i][j] * b[j]) end
+			local mag = math.max(math.abs(rho) - lambda / 2, 0)
+			local nb = (if rho >= 0 then mag else -mag) / z[j]
+			local d = nb - b[j]
+			if d ~= 0 then
+				for i = 1, n do r[i] -= Xc[i][j] * d end
+				b[j] = nb
+				maxDelta = math.max(maxDelta, math.abs(d))
+			end
+		end
+		if maxDelta < (tol or 1e-12) then break end
+	end
+	return intercept(xm, ym, b), b
+end
+
+function MathCore.predict(b0: number, b: Vector, Xs: Matrix): Vector
+	local out = table.create(#Xs)
+	for i, row in Xs do
+		local s = b0
+		for j = 1, #b do s += row[j] * b[j] end
+		out[i] = s
+	end
+	return out
+end
+
+-- R² = 1 − SS_res/SS_tot; возвращает и обе суммы для визуализации
+function MathCore.r2(y: Vector, yhat: Vector): (number, number, number)
+	local ym = MathCore.mean(y)
+	local res, tot = 0, 0
+	for i = 1, #y do
+		res += (y[i] - yhat[i]) ^ 2
+		tot += (y[i] - ym) ^ 2
+	end
+	return 1 - res / tot, res, tot
+end
+
+return MathCore
+]]></ProtectedString></Properties></Item><Item class="Folder" referent="RBX00000014"><Properties><string name="Name">Scenes</string></Properties><Item class="ModuleScript" referent="RBX00000013"><Properties><string name="Name">Flow3D</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- Flow3D: машина сцен 3D experience (3D.1 → 3D.6 → 2D.1).
+-- Каждая сцена: enter(flow), exit(flow)?, update(flow, snap)?, canAdvance(flow, snap), hintTargets(flow).
+-- Переход только по действию игрока; анимации ≤ 3 с; подсказки — 3 уровня («?» или 45 с без прогресса).
+
+local Regression = script.Parent.Parent
+local Config = require(Regression.Core.Config)
+local Records = require(Regression.Core.Records)
+local Format = require(Regression.Core.Format)
+local Theme = require(Regression.UI.Theme)
+local Strings = require(Regression.UI.Strings)
+
+local Flow3D = {}
+Flow3D.__index = Flow3D
+
+local ORDER = { "3D.1", "3D.2", "3D.3", "3D.4", "3D.5", "3D.6", "2D.1" }
+
+local function allTrue(t: { boolean }, n: number): boolean
+	for i = 1, n do
+		if not t[i] then
+			return false
+		end
+	end
+	return true
+end
+
+-- ctx: store, hud, bed, board, nextBoard, controls, lineModel, MathCore, screen2d
+function Flow3D.new(ctx)
+	local self = setmetatable({}, Flow3D)
+	for k, v in ctx do
+		self[k] = v
+	end
+	self.n = self.lineModel.n
+	self.index = 0
+	self.threadStart = {} -- i → os.clock() начала анимации нити
+	self.squareStart = {}
+	self.manualThreads = 0
+	self.lastProgress = os.clock()
+	self.hintLevel = 0
+	self.highlights = {}
+	self.watchers = {}
+	self.scenes = self:_buildScenes()
+
+	for i, f in self.bed.flowers do
+		f.prompt.Triggered:Connect(function()
+			self:_onFlowerPrompt(i)
+		end)
+	end
+	self.bed.controlPrompt.Triggered:Connect(function()
+		self.controls:enter()
+	end)
+	self.hud.onHintRequest = function()
+		self:requestHint()
+	end
+	return self
+end
+
+function Flow3D:start()
+	self:goto(1)
+end
+
+function Flow3D:sceneId(): string
+	return ORDER[self.index]
+end
+
+function Flow3D:progress()
+	self.lastProgress = os.clock()
+end
+
+function Flow3D:goto(i: number)
+	local cur = self.scenes[ORDER[self.index]]
+	if cur and cur.exit then
+		cur.exit(self)
+	end
+	self.index = i
+	local id = ORDER[i]
+	self.store:set("scene", id)
+	self.hud:setStep(id)
+	self:clearHint()
+	self:progress()
+	self.scenes[id].enter(self)
+end
+
+function Flow3D:addHoney(n: number)
+	local v = (self.store:get("honey") or 0) + n
+	self.store:set("honey", v)
+	self.hud:setHoney(v)
+end
+
+function Flow3D:setPrediction(key: string, value: number)
+	local p = table.clone(self.store:get("predictions") or {})
+	p[key] = value
+	self.store:set("predictions", p)
+end
+
+-- ───── анимации нитей и квадратов ─────
+
+function Flow3D:visuals(now: number)
+	local tg, sg = {}, {}
+	local animating = false
+	for i = 1, self.n do
+		local ts, ss = self.threadStart[i], self.squareStart[i]
+		tg[i] = if ts then math.clamp((now - ts) / Config.THREAD_GROW_S, 0, 1) else 0
+		sg[i] = if ss then math.clamp((now - ss) / Config.SQUARE_GROW_S, 0, 1) else 0
+		if (ts and tg[i] < 1) or (ss and sg[i] < 1) then
+			animating = true
+		end
+	end
+	return { threadGrow = tg, squareGrow = sg, animating = animating }
+end
+
+function Flow3D:drawThread(i: number, delay: number?)
+	local threads = table.clone(self.store:get("threads"))
+	if threads[i] then
+		return
+	end
+	threads[i] = true
+	self.store:set("threads", threads)
+	self.threadStart[i] = os.clock() + (delay or 0)
+	self.bed.flowers[i].prompt.ActionText = Strings.prompt.card
+	self:progress()
+end
+
+function Flow3D:_onFlowerPrompt(i: number)
+	if self:sceneId() == "3D.2" and not self.store:get("threads")[i] then
+		self.manualThreads += 1
+		self:drawThread(i)
+		if self.manualThreads == 1 then
+			self.board:setMessage(Strings.msg.firstThread, Theme.color.residual)
+		end
+		local threads = self.store:get("threads")
+		if self.manualThreads >= Config.MANUAL_THREADS_BEFORE_AUTO and not allTrue(threads, self.n) then
+			self.hud:setAction("primary", Strings.hud.restThreads, function()
+				local k = 0
+				for j = 1, self.n do
+					if not self.store:get("threads")[j] then
+						self:drawThread(j, k * 0.12)
+						k += 1
+					end
+				end
+				self.hud:setAction("primary", nil)
+			end)
+		end
+	elseif self.store:get("threads")[i] then
+		self.bed:toggleCard(i)
+		self.store:set("cardsTick", os.clock()) -- перерисовать клумбу
+	end
+end
+
+-- ───── запись точки на табло (R, кнопка табло, кнопка пульта) ─────
+
+function Flow3D:record()
+	local st = self.store
+	if not st:get("recordEnabled") then
+		return
+	end
+	local snap = self.lineModel:compute(st:get("m"), st:get("h"))
+	local records = st:get("records")
+	local ok, reason, other = Records.validate(records, snap.m, snap.h)
+	if not ok then
+		if reason == "too_close" and other then
+			self.hud:toast(Strings.msg.recordTooClose:format(Format.coef(other.m)), Theme.color.c)
+		else
+			self.hud:toast(Strings.msg.recordFull, Theme.color.c)
+		end
+		return
+	end
+	records = Records.add(records, { m = snap.m, mse = snap.mse, h = snap.h })
+	st:set("records", records)
+	self.hud:toast(Strings.msg.recordAdded:format(Format.coef(snap.m), Format.mse(snap.mse)), Theme.color.loss)
+	self.hud:flash(self.board.recordBtn)
+	self:progress()
+
+	local cur = Records.atHeight(records, snap.h)
+	if #cur == Config.ONE_SIDE_CHECK_AFTER then
+		if Records.oneSide(cur, self.lineModel.mOpt) then
+			self.board:setMessage(Strings.msg.oneSide, Theme.color.c)
+			self.hud:toast(Strings.msg.oneSide, Theme.color.c)
+		elseif (st:get("predictions") or {}).minimum == nil then
+			self.hud:ask(Strings.predictions.minimum, function(k)
+				self:setPrediction("minimum", k)
+				self:progress()
+			end)
+		end
+	end
+end
+
+-- ───── подсказки ─────
+
+function Flow3D:clearHighlights()
+	for _, h in self.highlights do
+		h:Destroy()
+	end
+	self.highlights = {}
+end
+
+function Flow3D:highlight(targets: { Instance })
+	self:clearHighlights()
+	for _, t in targets do
+		local h = Instance.new("Highlight")
+		h.FillColor = Theme.color.loss
+		h.FillTransparency = 0.75
+		h.OutlineColor = Theme.color.loss
+		h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		h.Adornee = t
+		h.Parent = t
+		table.insert(self.highlights, h)
+	end
+end
+
+function Flow3D:clearHint()
+	self.hintLevel = 0
+	self.hud:hideHint()
+	self:clearHighlights()
+end
+
+function Flow3D:showHint(level: number)
+	local id = self:sceneId()
+	local texts = Strings.hints[id]
+	local scene = self.scenes[id]
+	if not texts or not scene then
+		return
+	end
+	self.hintLevel = level
+	local text = texts[level]
+	if scene.hintText then
+		text = scene.hintText(self, level) or text
+	end
+	self.hud:showHint(level, text)
+	if scene.hintTargets then
+		self:highlight(scene.hintTargets(self))
+	end
+	local shownLevel = level
+	task.delay(15, function()
+		if self.hintLevel == shownLevel and self:sceneId() == id then
+			self.hud:hideHint()
+			self:clearHighlights()
+		end
+	end)
+end
+
+function Flow3D:requestHint()
+	self:showHint(math.min(self.hintLevel + 1, 3))
+	self:progress()
+end
+
+-- ───── кадр ─────
+
+function Flow3D:tick(snap, now: number)
+	local st = self.store
+	local id = self:sceneId()
+	local scene = self.scenes[id]
+	if scene.update then
+		scene.update(self, snap)
+	end
+	for _, w in table.clone(self.watchers) do
+		w(self, snap)
+	end
+
+	-- кнопка «Управлять прямой» для телефона и мыши
+	local wantControlBtn = st:get("controlUnlocked") == true and st:get("inZone") == true and not st:get("controlMode")
+	if wantControlBtn ~= self.controlBtnShown then
+		self.controlBtnShown = wantControlBtn
+		if wantControlBtn then
+			self.hud:setAction("control", Strings.hud.control, function()
+				self.controls:enter()
+			end)
+		else
+			self.hud:setAction("control", nil)
+		end
+	end
+
+	if scene.canAdvance and scene.canAdvance(self, snap) and self.index < #ORDER then
+		self:goto(self.index + 1)
+		return
+	end
+
+	-- 45 с без прогресса → следующий уровень подсказки (автоматически не дальше 2-го)
+	if now - self.lastProgress > Config.HINT_IDLE_S and self.hintLevel < 2 then
+		self:showHint(self.hintLevel + 1)
+		self:progress()
+	end
+end
+
+function Flow3D:watch(fn)
+	table.insert(self.watchers, fn)
+	return function()
+		local i = table.find(self.watchers, fn)
+		if i then
+			table.remove(self.watchers, i)
+		end
+	end
+end
+
+-- ───── сцены ─────
+
+function Flow3D:_buildScenes()
+	local scenes = {}
+
+	scenes["3D.1"] = {
+		enter = function(f)
+			f.board:setActive(false)
+			f.board:setMessage(Strings.msg.idle)
+		end,
+		canAdvance = function(f)
+			return f.store:get("inZone") == true
+		end,
+		exit = function(f)
+			f.board:setActive(true)
+		end,
+		hintTargets = function(f)
+			return { f.bed.soil }
+		end,
+	}
+
+	scenes["3D.2"] = {
+		enter = function(f)
+			for _, fl in f.bed.flowers do
+				f.controls:setPromptWanted(fl.prompt, true)
+			end
+		end,
+		canAdvance = function(f)
+			if not allTrue(f.store:get("threads"), f.n) then
+				return false
+			end
+			local v = f:visuals(os.clock())
+			for i = 1, f.n do
+				if v.threadGrow[i] < 1 then
+					return false
+				end
+			end
+			return true
+		end,
+		exit = function(f)
+			f.hud:setAction("primary", nil)
+			f.board:setMessage(Strings.msg.threadsDone)
+		end,
+		hintTargets = function(f)
+			local t = {}
+			for i, fl in f.bed.flowers do
+				if not f.store:get("threads")[i] then
+					table.insert(t, fl.model)
+				end
+			end
+			return t
+		end,
+	}
+
+	scenes["3D.3"] = {
+		enter = function(f)
+			for i = 1, f.n do
+				f.squareStart[i] = os.clock() + (i - 1) * 0.08
+			end
+			f.store:set("showMseFormula", true)
+			f.board:setMessage(Strings.msg.squares, Theme.color.residual)
+			f.hud:ask(Strings.predictions.squaresUp, function(k)
+				f:setPrediction("squaresUp", k)
+				f.store:set("controlUnlocked", true)
+				f.controls:setPromptWanted(f.bed.controlPrompt, true)
+				f.board:setMessage(Strings.msg.squares .. "\n" .. Strings.msg.controlHint, Theme.color.residual)
+				f:progress()
+				-- ответ на ставку — после действия: прямая выше всех цветков и поднята ещё на 0,1 м
+				-- (тогда все e < 0 и каждый квадрат растёт с высотой — ответ «вырастут» верен строго)
+				local crossH = nil
+				local stop
+				stop = f:watch(function(ff, snap)
+					for i = 1, ff.n do
+						if snap.e[i] >= 0 then
+							crossH = nil
+							return
+						end
+					end
+					if crossH == nil then
+						crossH = snap.h
+						ff.hud:toast(Strings.msg.aboveAll, Theme.color.residual)
+						return
+					end
+					if snap.h >= crossH + 0.1 - 1e-9 then
+						stop()
+						local correct = k == 1
+						ff.hud:resolve(correct, Strings.predictions.squaresUp.reveal)
+						if correct then
+							ff:addHoney(1)
+						end
+					end
+				end)
+			end)
+		end,
+		update = function(f)
+			if f.store:get("movedSlope") and not f.sawSlope then
+				f.sawSlope = true
+				f:progress()
+			end
+			if f.store:get("movedHeight") and not f.sawHeight then
+				f.sawHeight = true
+				f:progress()
+			end
+		end,
+		canAdvance = function(f)
+			local st = f.store
+			return st:get("controlUnlocked") and st:get("movedSlope") and st:get("movedHeight")
+		end,
+		hintText = function(f, level)
+			if not f.store:get("controlUnlocked") then
+				return Strings.hints.betFirst
+			end
+			return nil
+		end,
+		hintTargets = function(f)
+			return { if f.store:get("controlMode") then f.bed.line else f.bed.pedestal }
+		end,
+	}
+
+	scenes["3D.4"] = {
+		enter = function(f)
+			f.store:set("recordEnabled", true)
+			f.board:setMessage(Strings.msg.recordHint)
+			f.lastRecordH = f.store:get("h")
+		end,
+		update = function(f, snap)
+			-- высота сменилась при наличии записей — прежние бледнеют
+			if not Records.sameHeight(snap.h, f.lastRecordH) then
+				f.lastRecordH = snap.h
+				local recs = f.store:get("records")
+				if #recs > #Records.atHeight(recs, snap.h) then
+					f.board:setMessage(Strings.msg.heightChanged, Theme.color.c)
+				end
+			end
+		end,
+		canAdvance = function(f, snap)
+			return #Records.atHeight(f.store:get("records"), snap.h) >= Records.NEED
+		end,
+		exit = function(f)
+			f.store:set("recordEnabled", false)
+		end,
+		hintTargets = function(f)
+			return { f.bed.line, f.board.screen }
+		end,
+	}
+
+	scenes["3D.5"] = {
+		enter = function(f)
+			local h = f.store:get("h")
+			local cur = Records.atHeight(f.store:get("records"), h)
+			local P = Records.fit(f.MathCore, cur)
+			P.h = h
+			P.records = cur
+			f.store:set("parabola", P)
+			f.store:set("mSnap", { target = P.tStar, tol = Config.SNAP_TOL })
+			f.board:setMessage(Strings.msg.parabola:format(Format.coef(P.tStar), Format.num(math.deg(math.atan(P.tStar)), 1), Format.mse(P.vStar)), Theme.color.loss)
+			local pick = (f.store:get("predictions") or {}).minimum
+			if pick then
+				local region = if P.tStar < 0 then 1 elseif P.tStar <= 0.5 then 2 else 3
+				f.hud:resolve(pick == region, Strings.predictions.minimum.reveal:format(Format.coef(P.tStar)))
+				if pick == region then
+					f:addHoney(1)
+				end
+			else
+				f.hud:closePrediction()
+			end
+		end,
+		canAdvance = function(f, snap)
+			local P = f.store:get("parabola")
+			return P ~= nil and math.abs(snap.m - P.tStar) < 1e-9
+		end,
+		hintText = function(f, level)
+			if level == 2 then
+				local P = f.store:get("parabola")
+				return Strings.hints["3D.5"][2]:format(Format.coef(P.tStar), Format.coef(f.store:get("m")))
+			end
+			return nil
+		end,
+		hintTargets = function(f)
+			return { f.bed.line }
+		end,
+	}
+
+	scenes["3D.6"] = {
+		enter = function(f)
+			local P = f.store:get("parabola")
+			f.board:setMessage(Strings.msg.optimumFound .. "\n" .. Strings.msg.bestLineTip, Theme.color.good)
+			f.hud:toast(Strings.msg.optimumFound, Theme.color.good)
+			f.nextBoard:setParabola(P, P.records)
+			f.nextBoard:rise(function()
+				f.hud:toast(Strings.msg.nextBoard)
+			end)
+			-- бонус: лучшая прямая (m = m*, h = ȳ = 1,5 м) — в любой момент после 3D.5
+			local stop
+			stop = f:watch(function(ff, snap)
+				if math.abs(snap.m - P.tStar) < 1e-9 and math.abs(snap.h - Config.BEST_H) < 1e-3 then
+					stop()
+					ff:addHoney(1)
+					ff.board:setMessage(Strings.msg.bestLine:format(Format.mse(snap.mse)), Theme.color.good)
+					ff.hud:toast(Strings.msg.bestLine:format(Format.mse(snap.mse)), Theme.color.good)
+				end
+			end)
+		end,
+		canAdvance = function(f)
+			return f.store:get("opened2D") == true
+		end,
+		hintTargets = function(f)
+			return { f.nextBoard.screen }
+		end,
+	}
+
+	scenes["2D.1"] = {
+		enter = function(f) end,
+		canAdvance = function()
+			return false
+		end,
+	}
+
+	return scenes
+end
+
+-- Вызывается вторым табло
+function Flow3D:openScreen2D()
+	self.controls:exit()
+	self.screen2d:open(self.store:get("parabola"))
+	self.store:set("opened2D", true)
+	self:progress()
+end
+
+return Flow3D
+]]></ProtectedString></Properties></Item></Item><Item class="Folder" referent="RBX00000017"><Properties><string name="Name">Tests</string></Properties><Item class="ModuleScript" referent="RBX00000015"><Properties><string name="Name">LogicSpec</string><ProtectedString name="Source"><![CDATA[-- Автотест логики 3D experience: Format, BedGeometry, Records, LineModel, Store.
+-- Контрольные числа — из раскадровки 3D (references/3d-experience.md).
+-- run(mods) → checks, fails; mods = { MathCore, Datasets, Format, BedGeometry, Records, LineModel, Store }
+return function(mods)
+	local MathCore, D = mods.MathCore, mods.Datasets
+	local Format, Geo, Records, LineModel, Store = mods.Format, mods.BedGeometry, mods.Records, mods.LineModel, mods.Store
+
+	local checks, fails = 0, 0
+	local function ok(name: string, cond: boolean)
+		checks += 1
+		if not cond then
+			fails += 1
+			print("FAIL " .. name)
+		end
+	end
+	local function near(name: string, got: number?, want: number, tol: number?)
+		ok(name .. (" (got %s, want %s)"):format(tostring(got), tostring(want)), got ~= nil and math.abs(got - want) <= (tol or 1e-4))
+	end
+	local function eq(name: string, got: any, want: any)
+		ok(name .. (" (got %q, want %q)"):format(tostring(got), tostring(want)), got == want)
+	end
+
+	local NB, MINUS = "\u{00A0}", "\u{2212}"
+
+	-- Format
+	eq("num 0.566", Format.num(0.566, 3), "0,566")
+	eq("signed +", Format.signed(0.26), "+0,26")
+	eq("signed −", Format.signed(-0.37), MINUS .. "0,37")
+	eq("signed −0", Format.signed(-0.001), "0,00")
+	eq("mse unit", Format.mse(0.0982), "0,098" .. NB .. "м²")
+	eq("len", Format.len(1), "1,00" .. NB .. "м")
+	eq("percent", Format.percent(0.04 / 0.491), "8,1" .. NB .. "%")
+	eq("lambda 0", Format.lambda(0), "0")
+
+	-- LineModel: контрольные MSE
+	local fb = D.flowerbed
+	local lm = LineModel.new(MathCore, fb)
+	near("mOpt", lm.mOpt, 0.33, 1e-12)
+	near("hOpt = ȳ", lm.hOpt, 1.5, 1e-12)
+	near("start MSE (m=0, h=1)", lm:compute(0, 1).mse, 0.566, 1e-9)
+	near("best MSE (m=0.33, h=1.5)", lm:compute(0.33, 1.5).mse, 0.0982, 1e-9)
+	local best = lm:compute(0.33, 1.5)
+	for i, e in { 0.26, -0.37, -0.20, 0.47, -0.16 } do
+		near("residual " .. i, best.e[i], e, 1e-9)
+	end
+	near("L at optimum", best.L, 0.491, 1e-9)
+	for _, mh in { { -0.7, 0.3 }, { 0.1, 2.4 }, { 1.2, 1.0 }, { 0.33, 0 } } do
+		local m, h = mh[1], mh[2]
+		near(("closed form m=%g h=%g"):format(m, h), lm:compute(m, h).mse, 2 * m * m - 1.32 * m + 0.316 + (1.5 - h) ^ 2, 1e-9)
+	end
+
+	-- Records: пример записей из раскадровки (h = 1,0)
+	local list = {}
+	for _, m in { -0.2, 0.0, 0.2, 0.5, 0.8 } do
+		local v = Records.validate(list, m, 1.0)
+		ok("validate m=" .. m, v)
+		list = Records.add(list, { m = m, mse = lm:compute(m, 1.0).mse, h = 1.0 })
+	end
+	local wantMse = { 0.910, 0.566, 0.382, 0.406, 0.790 }
+	for i, r in list do
+		near("record mse " .. i, r.mse, wantMse[i], 1e-9)
+	end
+	local P = Records.fit(MathCore, list)
+	near("parabola a", P.a, 2.0, 1e-9)
+	near("parabola m*", P.tStar, 0.33, 1e-9)
+	near("parabola MSE*", P.vStar, 0.3482, 1e-9)
+	local full, why = Records.validate(list, 1.2, 1.0)
+	ok("full after 5", not full and why == "full")
+
+	local l2 = { { m = 0.2, mse = 0, h = 1.0 } }
+	local v1, r1, other = Records.validate(l2, 0.25, 1.0)
+	ok("too close", not v1 and r1 == "too_close" and other == l2[1])
+	ok("exactly 0.1 is fine", (Records.validate(l2, 0.3, 1.0)))
+	ok("other height is free", (Records.validate(l2, 0.2, 1.05)))
+	eq("atHeight filters", #Records.atHeight({ { m = 0, mse = 0, h = 1 }, { m = 0, mse = 0, h = 1.05 } }, 1.05), 1)
+	ok("oneSide below", Records.oneSide({ { m = 0, mse = 0, h = 1 }, { m = 0.2, mse = 0, h = 1 } }, 0.33))
+	ok("not oneSide", not Records.oneSide({ { m = 0, mse = 0, h = 1 }, { m = 0.5, mse = 0, h = 1 } }, 0.33))
+	local big = {}
+	for i = 1, 25 do
+		big = Records.add(big, { m = i * 0.1, mse = 0, h = if i <= 22 then 2.0 else 1.0 })
+	end
+	ok("cap keeps current height", #big == Records.MAX_TOTAL and #Records.atHeight(big, 1.0) == 3)
+
+	-- BedGeometry
+	local x0, y0, x1, y1 = Geo.clipLine(0, 1, 5, 3)
+	ok("clip flat", x0 == 0 and y0 == 1 and x1 == 5 and y1 == 1)
+	x0, y0, x1, y1 = Geo.clipLine(1.5, 1 - 2.5 * 1.5, 5, 3)
+	near("clip steep x0", x0, 1.8333333, 1e-6)
+	near("clip steep y0", y0, 0, 1e-9)
+	near("clip steep x1", x1, 3.8333333, 1e-6)
+	near("clip steep y1", y1, 3, 1e-9)
+	ok("clip outside", Geo.clipLine(0, 3.5, 5, 3) == nil)
+	local cx, cy, side = Geo.square(0.5, 1.1, 0.84, 2.5, 1)
+	near("square1 cx", cx, 0.37, 1e-9)
+	near("square1 cy", cy, 0.97, 1e-9)
+	near("square1 side", side, 0.26, 1e-9)
+	cx = Geo.square(4.5, 2.0, 2.16, 2.5, 1)
+	near("square5 goes right", cx, 4.58, 1e-9)
+	local _, ty0, _, ty1 = Geo.thread(2.5, 1.3, 1.5, 0.5)
+	ok("thread half", ty0 == 1.3 and math.abs(ty1 - 1.4) < 1e-12)
+	local a, b, c, d = Geo.clipSegment(-2, 1, 2, 1, -1, 1.5, 0, 2)
+	ok("clipSegment", a == -1 and b == 1 and c == 1.5 and d == 1)
+	ok("clipSegment outside", Geo.clipSegment(-2, 3, 2, 3, -1, 1.5, 0, 2) == nil)
+	near("distToRect inside", Geo.distToRect(3, -2, 10, 6), 0, 1e-12)
+	near("distToRect corner", Geo.distToRect(13, 10, 10, 6), 5, 1e-12)
+
+	-- Store
+	local st = Store.new({ m = 0, records = {} })
+	local seen, any = nil, 0
+	local conn = st.Changed:Connect("m", function(v)
+		seen = v
+	end)
+	st.Changed:Connect("*", function()
+		any += 1
+	end)
+	st:set("m", 0.5)
+	st:set("m", 0.5) -- без изменений — без события
+	eq("store changed", seen, 0.5)
+	eq("store * count", any, 1)
+	conn.Disconnect()
+	st:set("m", 0.7)
+	eq("store disconnect", seen, 0.5)
+	st:patch({ h = 1.5, honey = 2 })
+	local ser = st:serialize()
+	ok("serialize", ser.m == 0.7 and ser.h == 1.5 and ser.honey == 2 and ser.records ~= st:get("records"))
+
+	print(("Logic3D: %d/%d проверок пройдено"):format(checks - fails, checks))
+	return checks, fails
+end
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000016"><Properties><string name="Name">MathCoreSpec</string><ProtectedString name="Source"><![CDATA[-- Автотест MathCore против эталона scripts/export_expected.py (110 проверок).
+-- Модуль возвращает функцию: run(MathCore, Datasets, ExpectedValues) → checks, fails.
+-- Standalone: luau tests/run.luau · Studio: Script RegressionTests в ServerScriptService.
+return function(MathCore, D, E)
+
+	local fails, checks = 0, 0
+	local function near(name: string, got: number, want: number, tol: number?)
+		checks += 1
+		if math.abs(got - want) > (tol or 1e-5) then
+			fails += 1
+			print(("FAIL %s: got %.6f want %.6f"):format(name, got, want))
+		end
+	end
+	local function col(v)
+		local X = {}
+		for i, a in v do X[i] = { a } end
+		return X
+	end
+
+	-- 3D-клумба
+	local fb, Efb = D.flowerbed, E.flowerbed
+	local x, y = fb.x_m, fb.y_m
+	local o = MathCore.ols1d(x, y)
+	near("fb m", o.b1, Efb.ols.m); near("fb c", o.b0, Efb.ols.c); near("fb L", MathCore.sse1d(x, y, o.b0, o.b1), Efb.ols.L)
+	near("fb mse", MathCore.mseLine(x, y, o.b1, o.b0), Efb.ols.mse)
+	for _, ex in Efb.mse_examples do
+		local c = MathCore.lineFromPivot(ex.m, ex.h, fb.pivot_x_m)
+		near(("fb mse m=%g h=%g"):format(ex.m, ex.h), MathCore.mseLine(x, y, ex.m, c), ex.mse)
+	end
+	local rec = Efb.recording_example
+	local vs = {}
+	for i, mm in rec.m do vs[i] = MathCore.mseLine(x, y, mm, MathCore.lineFromPivot(mm, rec.h, fb.pivot_x_m)); near("fb rec " .. i, vs[i], rec.mse[i]) end
+	local P = MathCore.fitParabola(rec.m, vs)
+	near("fb parabola a", P.a, rec.parabola.a); near("fb parabola m*", P.tStar, rec.parabola.m_star); near("fb parabola mse*", P.vStar, rec.parabola.mse_star)
+	for i, e in Efb.residuals_at_ols do near("fb resid " .. i, y[i] - (o.b1 * x[i] + o.b0), e) end
+	for lam, want in Efb.ridge_m do local _, b = MathCore.ridge(col(x), y, tonumber(lam)); near("fb ridge " .. lam, b[1], want) end
+	for lam, want in Efb.lasso_m do local _, b = MathCore.lasso(col(x), y, tonumber(lam)); near("fb lasso " .. lam, b[1], want) end
+	for key, want in Efb.penalized_loss do
+		local kind, lam, mm = key:match("^(l%d)_([%d%.]+)_([%d%.%-]+)$")
+		near("fb pen " .. key, MathCore.penalizedLoss1d(x, y, tonumber(mm), tonumber(lam), kind), want)
+	end
+
+	-- Свободный член и R²
+	local idm, Eid = D.intercept_demo, E.intercept_demo
+	local o2 = MathCore.ols1d(idm.bees_k, idm.honey_kg)
+	near("id m", o2.b1, Eid.ols.m); near("id c", o2.b0, Eid.ols.c)
+	local v2 = {}
+	for i, cc in Eid.recording_example.c do v2[i] = MathCore.mseLine(idm.bees_k, idm.honey_kg, idm.fixed_slope, cc); near("id rec " .. i, v2[i], Eid.recording_example.mse[i]) end
+	local P2 = MathCore.fitParabola(Eid.recording_example.c, v2)
+	near("id c*", P2.tStar, Eid.recording_example.c_star); near("id mse*", P2.vStar, Eid.recording_example.mse_star)
+	local yhat = {}
+	for i, xi in idm.bees_k do yhat[i] = o2.b0 + o2.b1 * xi end
+	local r, res, tot = MathCore.r2(idm.honey_kg, yhat)
+	near("id r2", r, Eid.r2.r2); near("id ss_res", res, Eid.r2.ss_res); near("id ss_tot", tot, Eid.r2.ss_tot)
+
+	-- Малая выборка
+	local Es = E.small_sample
+	local Xtr, ytr, Xte, yte, Xall, yall = {}, {}, {}, {}, {}, {}
+	for _, row0 in D.small_sample.rows do
+		local row = { row0.bees_k, row0.temperature_C }
+		table.insert(Xall, row); table.insert(yall, row0.honey_kg)
+		if row0.sample == "first5" then table.insert(Xtr, row); table.insert(ytr, row0.honey_kg)
+		else table.insert(Xte, row); table.insert(yte, row0.honey_kg) end
+	end
+	local Ztr, mu, sd = MathCore.standardize(Xtr)
+	local Zte = MathCore.standardize(Xte, mu, sd)
+	local function chk(name, fn, lam, ex)
+		local b0, b = fn(Ztr, ytr, lam)
+		near(name .. " b0", b0, ex.b0)
+		for j = 1, #b do near(name .. " coef" .. j, b[j], ex.coefs[j]) end
+		near(name .. " r2 first5", (MathCore.r2(ytr, MathCore.predict(b0, b, Ztr))), ex.r2_first5)
+		near(name .. " r2 rest", (MathCore.r2(yte, MathCore.predict(b0, b, Zte))), ex.r2_rest)
+	end
+	chk("ss ols", MathCore.ridge, 0, Es.ols_first5)
+	for lam, ex in Es.ridge do chk("ss ridge " .. lam, MathCore.ridge, tonumber(lam), ex) end
+	for lam, ex in Es.lasso do chk("ss lasso " .. lam, MathCore.lasso, tonumber(lam), ex) end
+	local Za = MathCore.standardize(Xall); local a0, ab = MathCore.ols(Za, yall)
+	near("ss ols all15", (MathCore.r2(yall, MathCore.predict(a0, ab, Za))), Es.ols_all15_r2)
+
+	-- Лор
+	local L, El = D.lore, E.lore
+	local function mat(rows)
+		local X, yy = {}, {}
+		for i, r in rows do
+			local row = {}
+			for j, f in L.features do row[j] = r[f] end
+			X[i] = row; yy[i] = r.honey_kg
+		end
+		return X, yy
+	end
+	local Xl, hl = mat(L.train_apiaries); local Xp, hp = mat(L.player_hives)
+	local Zl, ml, sl = MathCore.standardize(Xl); local Zp = MathCore.standardize(Xp, ml, sl)
+	local lb0, lb = MathCore.lasso(Zl, hl, L.lambda_given)
+	near("lore b0", lb0, El.lasso.b0)
+	for j = 1, 3 do near("lore coef" .. j, lb[j], El.lasso.coefs[j]) end
+	local pr = MathCore.predict(lb0, lb, Zp)
+	for i = 1, #pr do near("lore pred" .. i, pr[i], El.lasso.predictions[i]) end
+	near("lore r2", (MathCore.r2(hp, pr)), El.lasso.r2_player)
+	local ob0, ob = MathCore.ols(Zl, hl)
+	near("lore ols r2", (MathCore.r2(hp, MathCore.predict(ob0, ob, Zp))), El.ols.r2_player)
+
+	print(("MathCore: %d/%d проверок пройдено"):format(checks - fails, checks))
+	return checks, fails
+end
+]]></ProtectedString></Properties></Item></Item><Item class="Folder" referent="RBX0000001E"><Properties><string name="Name">UI</string></Properties><Item class="ModuleScript" referent="RBX00000018"><Properties><string name="Name">Gui</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- Gui: короткие фабрики Instance для UI и мира. Parent всегда ставится последним.
+
+local Regression = script.Parent.Parent
+local Theme = require(Regression.UI.Theme)
+
+local Gui = {}
+
+function Gui.make(className: string, props: { [string]: any }?, children: { Instance }?): any
+	local inst = Instance.new(className)
+	local parent = nil
+	if props then
+		for k, v in props do
+			if k == "Parent" then
+				parent = v
+			else
+				inst[k] = v
+			end
+		end
+	end
+	if children then
+		for _, c in children do
+			c.Parent = inst
+		end
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+local function merge(defaults: { [string]: any }, props: { [string]: any }?): { [string]: any }
+	local t = table.clone(defaults)
+	if props then
+		for k, v in props do
+			t[k] = v
+		end
+	end
+	return t
+end
+
+function Gui.corner(radius: UDim?): UICorner
+	return Gui.make("UICorner", { CornerRadius = radius or UDim.new(0, 10) })
+end
+
+function Gui.stroke(color: Color3, thickness: number?, transparency: number?): UIStroke
+	return Gui.make("UIStroke", {
+		Color = color,
+		Thickness = thickness or 2,
+		Transparency = transparency or 0,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	})
+end
+
+function Gui.label(props: { [string]: any }?): TextLabel
+	return Gui.make("TextLabel", merge({
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Font = Theme.font,
+		TextColor3 = Theme.color.text,
+		TextSize = Theme.size.hudText,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Center,
+		RichText = true,
+		TextWrapped = true,
+		Text = "",
+	}, props))
+end
+
+function Gui.button(props: { [string]: any }?): TextButton
+	local b = Gui.make("TextButton", merge({
+		BackgroundColor3 = Theme.color.panel2,
+		BorderSizePixel = 0,
+		AutoButtonColor = true,
+		Font = Theme.fontBold,
+		TextColor3 = Theme.color.text,
+		TextSize = Theme.size.hudText,
+		RichText = true,
+		Text = "",
+	}, props))
+	Gui.corner().Parent = b
+	return b
+end
+
+function Gui.frame(props: { [string]: any }?): Frame
+	return Gui.make("Frame", merge({
+		BackgroundColor3 = Theme.color.panel,
+		BorderSizePixel = 0,
+	}, props))
+end
+
+-- Part для мира: закреплён, не мешает персонажу и лучам, без теней
+function Gui.part(props: { [string]: any }?): Part
+	return Gui.make("Part", merge({
+		Anchored = true,
+		CanCollide = false,
+		CanTouch = false,
+		CanQuery = false,
+		CastShadow = false,
+		Material = Enum.Material.SmoothPlastic,
+		TopSurface = Enum.SurfaceType.Smooth,
+		BottomSurface = Enum.SurfaceType.Smooth,
+	}, props))
+end
+
+-- Надпись над объектом в мире (размер в пикселях — читается с любого расстояния)
+function Gui.billboard(adornee: Instance, text: string, props: { [string]: any }?): (BillboardGui, TextLabel)
+	local bb = Gui.make("BillboardGui", merge({
+		Adornee = adornee,
+		Size = UDim2.fromOffset(150, 34),
+		StudsOffsetWorldSpace = Vector3.new(0, 1.2, 0),
+		AlwaysOnTop = false,
+		LightInfluence = 0,
+		MaxDistance = 60,
+		ResetOnSpawn = false,
+	}, props))
+	local lbl = Gui.label({
+		Size = UDim2.fromScale(1, 1),
+		Text = text,
+		TextSize = 22,
+		Font = Theme.fontBold,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextStrokeTransparency = 0.4,
+		Parent = bb,
+	})
+	bb.Parent = adornee
+	return bb, lbl
+end
+
+return Gui
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000019"><Properties><string name="Name">Hud</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- Hud: экранный слой 3D experience (ScreenGui):
+--   баннер шага · мёд · «?» и панель подсказки · всплывающие сообщения · ставки ·
+--   кнопки действий (с телефона всё доступно тапом) · пульт управления прямой (удержание = непрерывно).
+
+local TweenService = game:GetService("TweenService")
+
+local Regression = script.Parent.Parent
+local Config = require(Regression.Core.Config)
+local Theme = require(Regression.UI.Theme)
+local Gui = require(Regression.UI.Gui)
+local Strings = require(Regression.UI.Strings)
+
+local Hud = {}
+Hud.__index = Hud
+
+function Hud.new(playerGui: PlayerGui)
+	local self = setmetatable({}, Hud)
+	self.gui = Gui.make("ScreenGui", {
+		Name = "RegressionHud", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = playerGui,
+	})
+	self.actions = {}
+	self.pad = {}
+	self.padHandlers = {} -- name → function(down: boolean)
+	self.onHintRequest = nil :: (() -> ())?
+	self:_buildBanner()
+	self:_buildTopRight()
+	self:_buildToast()
+	self:_buildPrediction()
+	self:_buildActions()
+	self:_buildPad()
+	return self
+end
+
+-- ───── баннер шага ─────
+
+function Hud:_buildBanner()
+	local b = Gui.frame({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 8), Size = UDim2.new(0.62, 0, 0, 70),
+		BackgroundColor3 = Theme.color.bg, BackgroundTransparency = 0.15, Parent = self.gui })
+	Gui.corner().Parent = b
+	Gui.make("UISizeConstraint", { MaxSize = Vector2.new(640, 70), MinSize = Vector2.new(300, 70), Parent = b })
+	self.bannerStep = Gui.label({ Position = UDim2.fromOffset(14, 6), Size = UDim2.new(1, -28, 0, 22), TextSize = Theme.size.hudSmall,
+		TextColor3 = Theme.color.textDim, Parent = b })
+	self.bannerTask = Gui.label({ Position = UDim2.fromOffset(14, 28), Size = UDim2.new(1, -28, 0, 38), TextSize = Theme.size.hudText,
+		Font = Theme.fontBold, TextScaled = true, Parent = b })
+	Gui.make("UITextSizeConstraint", { MaxTextSize = Theme.size.hudText, Parent = self.bannerTask })
+end
+
+function Hud:setStep(id: string)
+	local s = Strings.step[id]
+	if not s then
+		return
+	end
+	self.bannerStep.Text = Strings.hud.stepLabel:format(id, s.title)
+	self.bannerTask.Text = s.task
+end
+
+-- ───── мёд и подсказки ─────
+
+function Hud:_buildTopRight()
+	self.hintBtn = Gui.button({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 8), Size = UDim2.fromOffset(52, 52),
+		Text = Strings.hud.hintBtn, TextSize = 30, BackgroundColor3 = Theme.color.panel2, Parent = self.gui })
+	self.hintBtn.Activated:Connect(function()
+		if self.onHintRequest then
+			self.onHintRequest()
+		end
+	end)
+	self.honey = Gui.label({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -74, 0, 8), Size = UDim2.fromOffset(120, 52),
+		BackgroundColor3 = Theme.color.bg, BackgroundTransparency = 0.15, Font = Theme.fontBold, TextColor3 = Theme.color.c,
+		TextXAlignment = Enum.TextXAlignment.Center, Parent = self.gui })
+	Gui.corner().Parent = self.honey
+	self:setHoney(0)
+
+	self.hint = Gui.frame({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 68), Size = UDim2.fromOffset(330, 0),
+		AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = Theme.color.bg, BackgroundTransparency = 0.1, Visible = false, Parent = self.gui })
+	Gui.corner().Parent = self.hint
+	Gui.stroke(Theme.color.loss, 2).Parent = self.hint
+	Gui.make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 10), Parent = self.hint })
+	Gui.make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4), Parent = self.hint })
+	self.hintTitle = Gui.label({ Size = UDim2.new(1, 0, 0, 22), TextSize = Theme.size.hudSmall, TextColor3 = Theme.color.loss, LayoutOrder = 1, Parent = self.hint })
+	self.hintText = Gui.label({ Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2, Parent = self.hint })
+end
+
+function Hud:setHoney(n: number)
+	self.honey.Text = Strings.hud.honey:format(n)
+end
+
+function Hud:showHint(level: number, text: string)
+	self.hintTitle.Text = Strings.hud.hintTitle:format(level)
+	self.hintText.Text = text
+	self.hint.Visible = true
+end
+
+function Hud:hideHint()
+	self.hint.Visible = false
+end
+
+-- ───── всплывающие сообщения ─────
+
+function Hud:_buildToast()
+	self.toastLabel = Gui.label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 90), Size = UDim2.fromOffset(0, 0),
+		AutomaticSize = Enum.AutomaticSize.XY, BackgroundColor3 = Theme.color.bg, BackgroundTransparency = 0.1, Font = Theme.fontBold,
+		TextWrapped = false, Visible = false, Parent = self.gui })
+	Gui.corner().Parent = self.toastLabel
+	Gui.make("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14), PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), Parent = self.toastLabel })
+	self.toastId = 0
+end
+
+function Hud:toast(text: string, color: Color3?)
+	self.toastId += 1
+	local id = self.toastId
+	local l = self.toastLabel
+	l.Text = text
+	l.TextColor3 = color or Theme.color.text
+	l.Visible = true
+	task.delay(Config.TOAST_S, function()
+		if self.toastId == id then
+			l.Visible = false
+		end
+	end)
+end
+
+-- ───── ставки ─────
+
+function Hud:_buildPrediction()
+	local p = Gui.frame({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(330, 0),
+		AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = Theme.color.bg, BackgroundTransparency = 0.08, Visible = false, Parent = self.gui })
+	Gui.corner().Parent = p
+	Gui.stroke(Theme.color.c, 2).Parent = p
+	Gui.make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 12), Parent = p })
+	Gui.make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8), Parent = p })
+	Gui.label({ Text = Strings.hud.predictionTitle, TextColor3 = Theme.color.c, TextSize = Theme.size.hudSmall, Size = UDim2.new(1, 0, 0, 20), LayoutOrder = 1, Parent = p })
+	self.predQuestion = Gui.label({ Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Font = Theme.fontBold, LayoutOrder = 2, Parent = p })
+	self.predButtons = {}
+	for i = 1, 4 do
+		local b = Gui.button({ Size = UDim2.new(1, 0, 0, Theme.size.touch), LayoutOrder = 2 + i, Visible = false, Parent = p })
+		b.Activated:Connect(function()
+			if self.predPick then
+				local fn = self.predPick
+				self.predPick = nil
+				self.predChosen = i
+				for k, other in self.predButtons do
+					other.BackgroundColor3 = if k == i then Theme.color.c else Theme.color.panel2
+					other.AutoButtonColor = false
+				end
+				fn(i)
+			end
+		end)
+		self.predButtons[i] = b
+	end
+	self.predResult = Gui.label({ Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 10, Visible = false, Parent = p })
+	self.pred = p
+end
+
+-- Показать ставку; onPick(i) вызывается один раз
+function Hud:ask(spec, onPick: (number) -> ())
+	self.predQuestion.Text = spec.question
+	for i, b in self.predButtons do
+		local opt = spec.options[i]
+		b.Visible = opt ~= nil
+		b.Text = opt or ""
+		b.BackgroundColor3 = Theme.color.panel2
+		b.AutoButtonColor = true
+	end
+	self.predResult.Visible = false
+	self.predPick = onPick
+	self.pred.Visible = true
+end
+
+-- Ответ после действия игрока; панель закрывается сама
+function Hud:resolve(correct: boolean, explanation: string)
+	self.predResult.Text = (if correct then Theme.tok("good", Strings.hud.predictionOk) else Strings.hud.predictionWrong) .. "\n" .. explanation
+	self.predResult.Visible = true
+	self.pred.Visible = true
+	self.predPick = nil
+	task.delay(6, function()
+		self.pred.Visible = false
+	end)
+end
+
+function Hud:closePrediction()
+	self.pred.Visible = false
+	self.predPick = nil
+end
+
+-- ───── кнопки действий ─────
+
+function Hud:_buildActions()
+	local col = Gui.frame({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -24), Size = UDim2.fromOffset(300, 0),
+		AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = self.gui })
+	Gui.make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8), HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		VerticalAlignment = Enum.VerticalAlignment.Bottom, Parent = col })
+	for order, slot in { "primary", "control" } do
+		local b = Gui.button({ Size = UDim2.fromOffset(300, 54), LayoutOrder = order, Visible = false, TextSize = 22,
+			BackgroundColor3 = if slot == "primary" then Theme.color.loss else Theme.color.panel2,
+			TextColor3 = if slot == "primary" then Theme.color.bg else Theme.color.text, Parent = col })
+		b.Activated:Connect(function()
+			local a = self.actions[slot]
+			if a and a.callback then
+				a.callback()
+			end
+		end)
+		self.actions[slot] = { button = b, callback = nil }
+	end
+	self.actionColumn = col
+end
+
+-- slot: "primary" | "control"; text = nil прячет кнопку
+function Hud:setAction(slot: string, text: string?, callback: (() -> ())?)
+	local a = self.actions[slot]
+	a.callback = callback
+	a.button.Visible = text ~= nil
+	if text then
+		a.button.Text = text
+	end
+end
+
+-- ───── пульт управления прямой ─────
+
+function Hud:_buildPad()
+	local h = Strings.hud
+	local pad = Gui.frame({ AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -16, 1, -16), Size = UDim2.fromOffset(2 * 128 + 8, 3 * 62 + 16),
+		BackgroundTransparency = 1, Visible = false, Parent = self.gui })
+	Gui.make("UIGridLayout", { CellSize = UDim2.fromOffset(128, 62), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pad })
+	local spec = {
+		{ "slopeUp", h.slopeUp, h.keyQ, Theme.color.m, true },
+		{ "up", h.up, h.keyShift, Theme.color.c, true },
+		{ "slopeDown", h.slopeDown, h.keyE, Theme.color.m, true },
+		{ "down", h.down, h.keyCtrl, Theme.color.c, true },
+		{ "record", h.record, h.keyR, Theme.color.loss, false },
+		{ "exit", h.exit, h.keyX, Theme.color.panel2, false },
+	}
+	for order, s in spec do
+		local name, text, key, color, hold = s[1], s[2], s[3], s[4], s[5]
+		local b = Gui.button({ LayoutOrder = order, BackgroundColor3 = Theme.color.panel2, TextSize = 20,
+			Text = ("%s\n<font size=\"14\" color=\"%s\">%s</font>"):format(text, Theme.hex.textDim, key), Parent = pad })
+		Gui.stroke(color, 2).Parent = b
+		if hold then
+			local function set(down: boolean)
+				local fn = self.padHandlers[name]
+				if fn then
+					fn(down)
+				end
+			end
+			b.InputBegan:Connect(function(input)
+				local t = input.UserInputType
+				if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
+					set(true)
+				end
+			end)
+			b.InputEnded:Connect(function(input)
+				local t = input.UserInputType
+				if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
+					set(false)
+				end
+			end)
+			b.MouseLeave:Connect(function()
+				set(false)
+			end)
+		else
+			b.Activated:Connect(function()
+				local fn = self.padHandlers[name]
+				if fn then
+					fn(true)
+				end
+			end)
+		end
+		self.pad[name] = b
+	end
+	self.padFrame = pad
+
+	self.keysBar = Gui.label({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -90), Size = UDim2.fromOffset(0, 0),
+		AutomaticSize = Enum.AutomaticSize.XY, BackgroundColor3 = Theme.color.bg, BackgroundTransparency = 0.15, TextWrapped = false,
+		Text = h.keysBar, TextSize = 18, Visible = false, Parent = self.gui })
+	Gui.corner().Parent = self.keysBar
+	Gui.make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = self.keysBar })
+end
+
+function Hud:showPad(on: boolean, keyboard: boolean, recordEnabled: boolean)
+	self.padFrame.Visible = on
+	self.keysBar.Visible = on and keyboard
+	self.pad.record.Visible = recordEnabled
+end
+
+-- Короткая вспышка кнопки (подтверждение действия ≤ 0,6 с)
+function Hud:flash(gui: GuiObject)
+	local old = gui.BackgroundColor3
+	gui.BackgroundColor3 = Theme.color.good
+	TweenService:Create(gui, TweenInfo.new(0.5), { BackgroundColor3 = old }):Play()
+end
+
+return Hud
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000001A"><Properties><string name="Name">PlotView2D</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- PlotView2D: 2D-график из Frame'ов. Работает и в ScreenGui, и в SurfaceGui (табло).
+-- Слои с пулами объектов: каждый кадр layer:begin() → dot/seg/curve/label → layer:finish().
+-- Instance.new только при первом заполнении пула. Отрезки обрезаются аналитически
+-- (ClipsDescendants не обрезает повёрнутые Frame).
+--
+--   local plot = PlotView2D.new(frame, { xMin=-1, xMax=1.5, yMin=0, yMax=2,
+--       xTicks={...}, yTicks={...}, xLabel="m", yLabel="MSE", fallbackW=500, fallbackH=380 })
+--   local L = plot:layer("records", 5); L:begin(); L:dot(0.2, 0.38, {color=...}); L:finish()
+
+local Regression = script.Parent.Parent
+local Theme = require(Regression.UI.Theme)
+local Gui = require(Regression.UI.Gui)
+local BedGeometry = require(Regression.Core.BedGeometry)
+
+local PlotView2D = {}
+PlotView2D.__index = PlotView2D
+
+local Layer = {}
+Layer.__index = Layer
+
+local function defaultFormat(v: number): string
+	local s = string.format("%g", v)
+	s = (s:gsub("%.", ","))
+	return (s:gsub("^%-", "\u{2212}"))
+end
+
+function PlotView2D.new(parent: GuiObject, opts)
+	local self = setmetatable({}, PlotView2D)
+	opts.padL = opts.padL or 64
+	opts.padR = opts.padR or 16
+	opts.padT = opts.padT or 40
+	opts.padB = opts.padB or 64
+	opts.fontSize = opts.fontSize or 22
+	opts.formatX = opts.formatX or defaultFormat
+	opts.formatY = opts.formatY or defaultFormat
+	self.opts = opts
+	self.root = Gui.frame({ BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = parent })
+	self.area = Gui.frame({
+		BackgroundColor3 = opts.bg or Theme.color.panel,
+		Position = UDim2.fromOffset(opts.padL, opts.padT),
+		Size = UDim2.new(1, -(opts.padL + opts.padR), 1, -(opts.padT + opts.padB)),
+		Parent = self.root,
+	})
+	self.layers = {}
+	self.onResize = nil :: (() -> ())?
+	self.area:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		self:drawGrid()
+		if self.onResize then
+			self.onResize()
+		end
+	end)
+	self:drawGrid()
+	return self
+end
+
+function PlotView2D:size(): (number, number)
+	local s = self.area.AbsoluteSize
+	if s.X < 2 or s.Y < 2 then
+		return self.opts.fallbackW or 400, self.opts.fallbackH or 300
+	end
+	return s.X, s.Y
+end
+
+function PlotView2D:toPx(x: number, y: number): (number, number)
+	local o = self.opts
+	local w, h = self:size()
+	return (x - o.xMin) / (o.xMax - o.xMin) * w, (1 - (y - o.yMin) / (o.yMax - o.yMin)) * h
+end
+
+function PlotView2D:inRange(x: number, y: number): boolean
+	local o = self.opts
+	return x >= o.xMin and x <= o.xMax and y >= o.yMin and y <= o.yMax
+end
+
+function PlotView2D:layer(name: string, z: number?)
+	local L = self.layers[name]
+	if L then
+		return L
+	end
+	L = setmetatable({
+		plot = self,
+		holder = Gui.frame({
+			Name = name,
+			BackgroundTransparency = 1,
+			Size = UDim2.fromScale(1, 1),
+			ZIndex = z or 2,
+			Parent = self.area,
+		}),
+		dots = {}, segs = {}, labels = {},
+		nd = 0, ns = 0, nl = 0,
+	}, Layer)
+	self.layers[name] = L
+	return L
+end
+
+function PlotView2D:drawGrid()
+	local o = self.opts
+	local L = self:layer("grid", 1)
+	local w, h = self:size()
+	L:begin()
+	for _, xt in o.xTicks do
+		L:seg(xt, o.yMin, xt, o.yMax, { color = if xt == 0 then Theme.color.axis else Theme.color.grid, thickness = if xt == 0 then 2 else 1 })
+		local px = self:toPx(xt, o.yMin)
+		L:labelPx(px, h + 6, o.formatX(xt), { anchor = Vector2.new(0.5, 0), size = o.fontSize, color = Theme.color.textDim })
+	end
+	for _, yt in o.yTicks do
+		L:seg(o.xMin, yt, o.xMax, yt, { color = if yt == 0 then Theme.color.axis else Theme.color.grid, thickness = if yt == 0 then 2 else 1 })
+		local _, py = self:toPx(o.xMin, yt)
+		L:labelPx(-8, py, o.formatY(yt), { anchor = Vector2.new(1, 0.5), size = o.fontSize, color = Theme.color.textDim })
+	end
+	if o.xLabel then
+		L:labelPx(w / 2, h + o.fontSize + 14, o.xLabel, { anchor = Vector2.new(0.5, 0), size = o.fontSize, color = Theme.color.text })
+	end
+	if o.yLabel then
+		L:labelPx(0, -8, o.yLabel, { anchor = Vector2.new(0, 1), size = o.fontSize, color = Theme.color.text })
+	end
+	L:finish()
+end
+
+-- ───── Layer ─────
+
+function Layer:begin()
+	self.nd, self.ns, self.nl = 0, 0, 0
+end
+
+function Layer:finish()
+	for i = self.nd + 1, #self.dots do self.dots[i].Visible = false end
+	for i = self.ns + 1, #self.segs do self.segs[i].Visible = false end
+	for i = self.nl + 1, #self.labels do self.labels[i].Visible = false end
+end
+
+-- style: color, size (px), hollow, transparency, strokeColor
+function Layer:dot(x: number, y: number, style)
+	style = style or {}
+	if not self.plot:inRange(x, y) then
+		return
+	end
+	local px, py = self.plot:toPx(x, y)
+	self.nd += 1
+	local f = self.dots[self.nd]
+	if not f then
+		f = Gui.frame({ AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 3, Parent = self.holder })
+		Gui.corner(UDim.new(0.5, 0)).Parent = f
+		Gui.stroke(Theme.color.text, 3).Parent = f
+		self.dots[self.nd] = f
+	end
+	local size = style.size or 12
+	local tr = style.transparency or 0
+	local color = style.color or Theme.color.text
+	f.Visible = true
+	f.Size = UDim2.fromOffset(size, size)
+	f.Position = UDim2.fromOffset(px, py)
+	f.BackgroundColor3 = color
+	f.BackgroundTransparency = if style.hollow then 1 else tr
+	local st = f:FindFirstChildOfClass("UIStroke")
+	st.Enabled = style.hollow == true or style.strokeColor ~= nil
+	st.Color = style.strokeColor or color
+	st.Transparency = tr
+end
+
+-- Отрезок в пикселях области графика
+function Layer:segPx(ax: number, ay: number, bx: number, by: number, style)
+	style = style or {}
+	local dx, dy = bx - ax, by - ay
+	local len = math.sqrt(dx * dx + dy * dy)
+	if len < 0.5 then
+		return
+	end
+	self.ns += 1
+	local f = self.segs[self.ns]
+	if not f then
+		f = Gui.frame({ AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 2, Parent = self.holder })
+		self.segs[self.ns] = f
+	end
+	f.Visible = true
+	f.Position = UDim2.fromOffset((ax + bx) / 2, (ay + by) / 2)
+	f.Size = UDim2.fromOffset(len + 1, style.thickness or 3)
+	f.Rotation = math.deg(math.atan2(dy, dx))
+	f.BackgroundColor3 = style.color or Theme.color.text
+	f.BackgroundTransparency = style.transparency or 0
+end
+
+-- Отрезок в координатах данных, обрезанный по области графика
+function Layer:seg(x0: number, y0: number, x1: number, y1: number, style)
+	local o = self.plot.opts
+	local a, b, c, d = BedGeometry.clipSegment(x0, y0, x1, y1, o.xMin, o.xMax, o.yMin, o.yMax)
+	if not a then
+		return
+	end
+	local ax, ay = self.plot:toPx(a, b)
+	local bx, by = self.plot:toPx(c, d)
+	self:segPx(ax, ay, bx, by, style)
+end
+
+-- Кривая y = fn(x) ломаной из steps отрезков
+function Layer:curve(fn: (number) -> number, xFrom: number, xTo: number, steps: number, style)
+	local px, py = xFrom, fn(xFrom)
+	for i = 1, steps do
+		local x = xFrom + (xTo - xFrom) * i / steps
+		local y = fn(x)
+		self:seg(px, py, x, y, style)
+		px, py = x, y
+	end
+end
+
+-- Пунктирная вертикаль x = const от y0 до y1
+function Layer:dashedV(x: number, y0: number, y1: number, style)
+	local o = self.plot.opts
+	if x < o.xMin or x > o.xMax then
+		return
+	end
+	local _, pa = self.plot:toPx(x, math.clamp(y0, o.yMin, o.yMax))
+	local px, pb = self.plot:toPx(x, math.clamp(y1, o.yMin, o.yMax))
+	local top, bottom = math.min(pa, pb), math.max(pa, pb)
+	local dash, gap = 8, 6
+	local y = top
+	while y < bottom do
+		self:segPx(px, y, px, math.min(y + dash, bottom), style)
+		y += dash + gap
+	end
+end
+
+-- Подпись в пикселях; style: anchor, size, color, font, transparency
+function Layer:labelPx(px: number, py: number, text: string, style)
+	style = style or {}
+	self.nl += 1
+	local l = self.labels[self.nl]
+	if not l then
+		l = Gui.label({
+			AutomaticSize = Enum.AutomaticSize.XY,
+			Size = UDim2.fromOffset(0, 0),
+			TextWrapped = false,
+			ZIndex = 4,
+			Parent = self.holder,
+		})
+		self.labels[self.nl] = l
+	end
+	l.Visible = true
+	l.AnchorPoint = style.anchor or Vector2.new(0, 1)
+	l.Position = UDim2.fromOffset(px, py)
+	l.TextSize = style.size or self.plot.opts.fontSize
+	l.TextColor3 = style.color or Theme.color.text
+	l.Font = style.font or Theme.font
+	l.TextTransparency = style.transparency or 0
+	l.Text = text
+end
+
+function Layer:label(x: number, y: number, text: string, style)
+	style = style or {}
+	local px, py = self.plot:toPx(x, y)
+	self:labelPx(px + (style.dx or 0), py + (style.dy or 0), text, style)
+end
+
+return PlotView2D
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000001B"><Properties><string name="Name">Screen2D</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- Screen2D: экран 2D experience, открывается со второго табло (3D.6).
+-- Сейчас — каркас шага 2D.1: парабола игрока перенесена из 3D (записи, вершина m*).
+-- Сцены 2D.1–2D.7 (касательная, dL/dm, свободный член, Ridge/Lasso, R²) подключаются сюда на вехах M3–M5.
+
+local Regression = script.Parent.Parent
+local Format = require(Regression.Core.Format)
+local Theme = require(Regression.UI.Theme)
+local Gui = require(Regression.UI.Gui)
+local Strings = require(Regression.UI.Strings)
+local PlotView2D = require(Regression.UI.PlotView2D)
+
+local Screen2D = {}
+Screen2D.__index = Screen2D
+
+function Screen2D.new(playerGui: PlayerGui)
+	local self = setmetatable({}, Screen2D)
+	self.gui = Gui.make("ScreenGui", {
+		Name = "Regression2D", ResetOnSpawn = false, Enabled = false, DisplayOrder = 10,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = playerGui,
+	})
+	local dim = Gui.frame({ Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.35, Parent = self.gui })
+	local panel = Gui.frame({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(0.9, 0.86),
+		BackgroundColor3 = Theme.color.bg, Parent = dim })
+	Gui.corner(UDim.new(0, 14)).Parent = panel
+	Gui.make("UISizeConstraint", { MaxSize = Vector2.new(1100, 680), Parent = panel })
+
+	Gui.label({ Position = UDim2.fromOffset(20, 12), Size = UDim2.new(1, -150, 0, 40), Text = Strings.screen2d.title,
+		TextSize = 28, Font = Theme.fontBold, TextScaled = true, Parent = panel })
+	local close = Gui.button({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 12), Size = UDim2.fromOffset(120, 44),
+		Text = Strings.screen2d.close, Parent = panel })
+	close.Activated:Connect(function()
+		self:close()
+	end)
+
+	-- Слева график, справа текст (на узком экране — друг под другом)
+	local plotHolder = Gui.frame({ BackgroundTransparency = 1, Position = UDim2.new(0, 10, 0, 64), Size = UDim2.new(0.62, -10, 1, -74), Parent = panel })
+	self.text = Gui.label({ Position = UDim2.new(0.62, 16, 0, 70), Size = UDim2.new(0.38, -32, 1, -90), TextSize = 20,
+		TextYAlignment = Enum.TextYAlignment.Top, Parent = panel })
+	self.plot = PlotView2D.new(plotHolder, {
+		xMin = -1, xMax = 1.5, yMin = 0, yMax = 2,
+		xTicks = { -1, -0.5, 0, 0.5, 1, 1.5 }, yTicks = { 0, 0.5, 1, 1.5, 2 },
+		xLabel = Strings.plotX, yLabel = Strings.plotY,
+		padL = 56, padR = 12, padT = 34, padB = 60, fontSize = 18,
+		fallbackW = 500, fallbackH = 400,
+	})
+	self.plot.onResize = function()
+		if self.P then
+			self:_draw()
+		end
+	end
+	return self
+end
+
+function Screen2D:_draw()
+	local P = self.P
+	local L = self.plot:layer("parabola", 3)
+	L:begin()
+	L:curve(function(m)
+		return P.a * m * m + P.b * m + P.k
+	end, -1, 1.5, 100, { color = Theme.color.loss, thickness = 3 })
+	for _, r in P.records or {} do
+		L:dot(r.m, r.mse, { color = Theme.color.loss, size = 14 })
+	end
+	L:dashedV(P.tStar, 0, P.vStar, { color = Theme.color.flag, thickness = 2 })
+	L:dot(P.tStar, P.vStar, { color = Theme.color.flag, size = 16 })
+	L:label(P.tStar, P.vStar, "m* = " .. Format.coef(P.tStar), { dx = 10, dy = -8, size = 20, font = Theme.fontBold })
+	L:finish()
+end
+
+function Screen2D:open(P)
+	self.P = P
+	self.gui.Enabled = true
+	if P then
+		self.text.Text = ("%s\n\nMSE(m) = %s·m² %s %s·m + %s\n%s = %s\n%s = %s"):format(
+			Strings.screen2d.body,
+			Format.num(P.a, 2), if P.b < 0 then "−" else "+", Format.num(math.abs(P.b), 2), Format.num(P.k, 3),
+			Theme.tok("mText", "m*"), Format.coef(P.tStar),
+			Theme.tok("residual", "MSE*"), Format.mse(P.vStar))
+		self:_draw()
+	end
+end
+
+function Screen2D:close()
+	self.gui.Enabled = false
+end
+
+return Screen2D
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000001C"><Properties><string name="Name">Strings</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Strings: все строки интерфейса 3D experience (задел под локализацию).
+-- Цвета в RichText подставляются из Theme.hex в местах использования.
+
+return {
+	-- Табло
+	boardTitle = "Клумба · ошибка предсказания",
+	boardIdle = "Подойди к клумбе —\nтабло оживёт",
+	slopeName = "наклон",
+	heightName = "высота",
+	lambdaNote = "регуляризации пока нет",
+	plotTitle = "MSE от наклона",
+	plotX = "m (наклон)",
+	plotY = "MSE, м²",
+	staleNote = "бледные — записаны на другой высоте",
+	parabolaOtherH = "парабола построена при h = %s; минимум по m тот же",
+	recordBtn = "Записать (R)",
+	recordCounter = "Записи при h = %s: %d из 5",
+	recordsDone = "Записи готовы",
+
+	-- Шаги: баннер (заголовок + задание)
+	step = {
+		["3D.1"] = { title = "Клумба", task = "Подойди к клумбе с пятью цветками" },
+		["3D.2"] = { title = "Ошибки", task = "Протяни нить от каждого цветка до прямой — F у цветка" },
+		["3D.3"] = { title = "Квадраты ошибок", task = "Подвигай прямую: Q/E — наклон, Shift/Ctrl — высота" },
+		["3D.4"] = { title = "Пять записей", task = "Запиши 5 разных наклонов на одной высоте — R" },
+		["3D.5"] = { title = "Парабола и минимум", task = "Поставь прямую на наклон из минимума параболы" },
+		["3D.6"] = { title = "Дальше — графики", task = "Подойди ко второму табло и продолжи обучение" },
+		["2D.1"] = { title = "2D experience", task = "Экран обучения открыт" },
+	},
+
+	-- Сообщения на табло
+	msg = {
+		idle = "Пять цветков — это точки данных. Прямая — наша модель.",
+		firstThread = "Нить — это ошибка предсказания для цветка:\ne = y − ŷ (по оси y клумбы)",
+		threadsDone = "Все ошибки видны. Теперь возведём их в квадрат.",
+		squares = "Площадь квадрата = e². MSE — средняя площадь пяти квадратов.",
+		aboveAll = "Прямая выше всех цветков. Подними ещё — и смотри на квадраты",
+		controlHint = "Пульт перед клумбой: «Управлять прямой» (F)",
+		recordHint = "Меняй наклон и записывай: R или кнопка ниже. Высоту между записями не меняй.",
+		recordTooClose = "Слишком близко к записи m = %s — измени наклон хотя бы на 0,1",
+		recordFull = "На этой высоте уже 5 записей",
+		recordAdded = "Записано: m = %s, MSE = %s",
+		heightChanged = "Высота изменилась — прежние записи бледнеют. Парабола строится по одной высоте.",
+		oneSide = "Все записи по одну сторону от минимума — попробуй наклон в другую сторону",
+		parabola = "Минимум параболы: m* = %s — угол наклона ≈ %s° (MSE* = %s). Поставь прямую на этот наклон: Q/E",
+		optimumFound = "Оптимальный наклон найден! Квадраты стали меньше.",
+		bestLineTip = "Попробуй высоту h = 1,50 м (Shift/Ctrl) — это лучшая прямая для клумбы",
+		bestLine = "Лучшая прямая для клумбы: MSE = %s",
+		nextBoard = "Справа поднялось второе табло — там продолжение с графиками",
+	},
+
+	-- Карточка цветка
+	card = {
+		title = "Цветок %d",
+		x = "x",
+		y = "y",
+		yhat = "Прогноз ŷ",
+		e = "Ошибка e",
+		e2 = "e² (площадь квадрата)",
+		share = "Вклад в L",
+		noThread = "протяни нить, чтобы увидеть ошибку",
+	},
+
+	-- ProximityPrompt
+	prompt = {
+		thread = "Протянуть нить",
+		card = "Карточка цветка",
+		flower = "Цветок %d",
+		control = "Управлять прямой",
+		pedestal = "Пульт",
+		continue = "Продолжить обучение",
+		board2 = "Второе табло",
+	},
+
+	-- HUD
+	hud = {
+		honey = "Мёд: %d",
+		restThreads = "Протянуть остальные",
+		control = "Управлять прямой",
+		keysBar = "Q/E — наклон · Shift/Ctrl — высота · R — записать · X — выйти",
+		slopeUp = "Наклон +",
+		slopeDown = "Наклон −",
+		up = "Выше",
+		down = "Ниже",
+		record = "Записать",
+		exit = "Выйти",
+		keyQ = "Q",
+		keyE = "E",
+		keyShift = "Shift",
+		keyCtrl = "Ctrl",
+		keyR = "R",
+		keyX = "X",
+		hintBtn = "?",
+		hintTitle = "Подсказка %d из 3",
+		predictionTitle = "Ставка",
+		predictionOk = "Верно! +1 мёд",
+		predictionWrong = "Не угадал — но теперь ты знаешь",
+		stepLabel = "Шаг %s · %s",
+	},
+
+	-- Ставки
+	predictions = {
+		squaresUp = {
+			question = "Что будет с квадратами, если поднять прямую выше всех цветков?",
+			options = { "Вырастут", "Уменьшатся", "Останутся как есть" },
+			reveal = "Квадраты растут: когда прямая выше всех цветков, каждый подъём удлиняет все нити, а площадь растёт как квадрат длины.",
+		},
+		minimum = {
+			question = "Где будет минимум MSE?",
+			options = { "меньше 0", "от 0 до 0,5", "больше 0,5" },
+			reveal = "Минимум параболы: m* = %s",
+		},
+	},
+
+	-- Подсказки по уровням
+	hints = {
+		["3D.1"] = { "Клумба подсвечена", "Иди к подсвеченной клумбе", "Подойди к клумбе ближе чем на 10 studs" },
+		["3D.2"] = { "Подсвечены цветки без нити", "Подойди к цветку и нажми F", "F у каждого цветка — или «Протянуть остальные» после двух" },
+		["3D.3"] = { "Подсвечен пульт перед клумбой", "У пульта нажми F «Управлять прямой»", "Нажми Q (наклон), потом Shift (высота)" },
+		["3D.4"] = { "Подсвечена прямая", "Меняй наклон Q/E и нажимай R после каждого изменения (шаг ≥ 0,1)", "Например, при h = 1,00 м: m = −0,2; 0; 0,2; 0,5; 0,8" },
+		["3D.5"] = { "Подсвечена прямая", "Нужен наклон m* = %s, сейчас m = %s", "Q увеличивает наклон, E уменьшает; рядом с m* прямая прилипнет сама" },
+		betFirst = "Сначала ответь на ставку справа — после неё откроется пульт",
+		["3D.6"] = { "Подсвечено второе табло", "Второе табло — справа от первого", "Подойди к нему и нажми F «Продолжить обучение»" },
+	},
+
+	-- 2D (заглушка следующей вехи)
+	screen2d = {
+		title = "2D.1 · Минимум параболы — это dL/dm = 0",
+		body = "Твоя парабола из клумбы перенесена сюда. Следующие экраны (касательная и dL/dm, свободный член, Ridge и Lasso, R²) — веха M3–M5.",
+		close = "Закрыть",
+		boardTitle = "Продолжить обучение",
+		boardBody = "Почему минимум параболы — там, где касательная горизонтальна?",
+	},
+}
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000001D"><Properties><string name="Name">Theme</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Theme: палитра Okabe–Ito (различима при дальтонизме), шрифты, размеры.
+
+local Theme = {}
+
+Theme.hex = {
+	c = "#E69F00", -- свободный член, высота прямой
+	m = "#0072B2", -- наклон
+	mText = "#3D9BE0", -- наклон в тексте на тёмном фоне (тот же тон, светлее для контраста)
+	residual = "#D55E00", -- ошибки и их квадраты
+	mean = "#7F7F7F", -- средние, ось вращения
+	penalty = "#CC79A7", -- λ, штраф
+	loss = "#56B4E9", -- функция потерь, записи на графике
+	good = "#009E73",
+	text = "#EDEDED",
+	textDim = "#A0A0AA",
+}
+
+local function hex(s: string): Color3
+	return Color3.fromHex(s)
+end
+
+Theme.color = {
+	c = hex(Theme.hex.c),
+	m = hex(Theme.hex.m),
+	mText = hex(Theme.hex.mText),
+	residual = hex(Theme.hex.residual),
+	mean = hex(Theme.hex.mean),
+	penalty = hex(Theme.hex.penalty),
+	loss = hex(Theme.hex.loss),
+	good = hex(Theme.hex.good),
+	text = hex(Theme.hex.text),
+	textDim = hex(Theme.hex.textDim),
+
+	bg = hex("#1E1E24"),
+	panel = hex("#2A2A33"),
+	panel2 = hex("#34343F"),
+	grid = hex("#3A3A46"),
+	axis = hex("#8A8A96"),
+	line = hex("#F4F4F4"), -- прямая в мире
+	flag = hex("#FFFFFF"),
+
+	-- Мир
+	soil = hex("#5B3A29"),
+	wood = hex("#8B5A2B"),
+	stem = hex("#3F7D3A"),
+	flowerCore = hex("#F2C14E"),
+	boardFrame = hex("#2B2B2B"),
+	petals = { hex("#E86A92"), hex("#9B7FE6"), hex("#F28C38"), hex("#5BC0EB"), hex("#F2F2F2") },
+}
+
+-- Builder Sans — фирменный шрифт Roblox; проверь глифы Σ ŷ λ ² − на ПК и телефоне
+Theme.font = Enum.Font.BuilderSans
+Theme.fontMedium = Enum.Font.BuilderSansMedium
+Theme.fontBold = Enum.Font.BuilderSansBold
+
+Theme.size = {
+	touch = 44, -- минимальная зона касания
+	hudText = 20,
+	hudSmall = 16,
+}
+
+-- RichText-обёртка цветом токена
+function Theme.tok(name: string, text: string): string
+	local h = Theme.hex[name] or Theme.hex.text
+	return ('<font color="%s">%s</font>'):format(h, text)
+end
+
+return Theme
+]]></ProtectedString></Properties></Item></Item><Item class="Folder" referent="RBX00000022"><Properties><string name="Name">World</string></Properties><Item class="ModuleScript" referent="RBX0000001F"><Properties><string name="Name">Flowerbed</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- Flowerbed: клумба в мире (локально у игрока): грядка, оси, 5 цветков, прямая, нити, квадраты, пульт.
+-- Система координат: origin — центр клумбы на уровне земли; локальная X — вдоль клумбы (ось x данных),
+-- локальная −Z — поперёк от игрока (ось y данных), Y — вверх. 1 м = Config.STUDS_PER_M studs.
+-- Всё создаётся один раз; при движении прямой меняются только CFrame/Size/Transparency.
+
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local Regression = script.Parent.Parent
+local Config = require(Regression.Core.Config)
+local BedGeometry = require(Regression.Core.BedGeometry)
+local Format = require(Regression.Core.Format)
+local Theme = require(Regression.UI.Theme)
+local Gui = require(Regression.UI.Gui)
+local Strings = require(Regression.UI.Strings)
+
+local Flowerbed = {}
+Flowerbed.__index = Flowerbed
+
+local LINE_LIFT = 0.18
+local THREAD_LIFT = 0.22
+local SQUARE_LIFT = 0.04
+
+function Flowerbed.new(args)
+	local self = setmetatable({}, Flowerbed)
+	local fb = args.data
+	self.origin = args.origin :: CFrame
+	self.W, self.H = fb.bed_length_m, fb.bed_width_m
+	self.x, self.y, self.n = fb.x_m, fb.y_m, #fb.x_m
+	self.pivotX = fb.pivot_x_m
+	self.S = Config.STUDS_PER_M
+	self.surface = 0.4
+	self.model = Gui.make("Model", { Name = "RegressionFlowerbed" })
+	self.flowers = {}
+	self.threads, self.threadLabels, self.squares = {}, {}, {}
+	self.cards = {}
+	self.cardPinned, self.cardHover = {}, nil
+	self:_buildBed()
+	self:_buildFlowers()
+	self:_buildLine()
+	self:_buildResiduals()
+	self:_buildPedestal()
+	self.model.Parent = args.parent
+	return self
+end
+
+-- ───── координаты ─────
+
+function Flowerbed:localPos(x: number, y: number, lift: number?): Vector3
+	return Vector3.new((x - self.W / 2) * self.S, self.surface + (lift or 0), -(y - self.H / 2) * self.S)
+end
+
+function Flowerbed:toWorld(x: number, y: number, lift: number?): Vector3
+	return self.origin:PointToWorldSpace(self:localPos(x, y, lift))
+end
+
+function Flowerbed:cfAt(x: number, y: number, lift: number?): CFrame
+	return self.origin * CFrame.new(self:localPos(x, y, lift))
+end
+
+-- Позиция игрока относительно клумбы → расстояние до её прямоугольника (studs)
+function Flowerbed:distanceTo(worldPos: Vector3): number
+	local p = self.origin:PointToObjectSpace(worldPos)
+	return BedGeometry.distToRect(p.X, p.Z, self.W * self.S / 2, self.H * self.S / 2)
+end
+
+function Flowerbed:_attach(x: number, y: number, lift: number?): Attachment
+	local a = Instance.new("Attachment")
+	a.Parent = self.soil
+	a.WorldPosition = self:toWorld(x, y, lift)
+	return a
+end
+
+-- ───── построение ─────
+
+function Flowerbed:_buildBed()
+	local L, D = self.W * self.S, self.H * self.S
+	local o = self.origin
+	self.soil = Gui.part({
+		Name = "Soil", Size = Vector3.new(L, 0.4, D), CFrame = o * CFrame.new(0, 0.2, 0),
+		Color = Theme.color.soil, Material = Enum.Material.Ground, CanCollide = true, Parent = self.model,
+	})
+	for _, b in {
+		{ Vector3.new(L + 1, 0.7, 0.5), Vector3.new(0, 0.35, D / 2 + 0.25) },
+		{ Vector3.new(L + 1, 0.7, 0.5), Vector3.new(0, 0.35, -(D / 2 + 0.25)) },
+		{ Vector3.new(0.5, 0.7, D), Vector3.new(L / 2 + 0.25, 0.35, 0) },
+		{ Vector3.new(0.5, 0.7, D), Vector3.new(-(L / 2 + 0.25), 0.35, 0) },
+	} do
+		Gui.part({
+			Name = "Border", Size = b[1], CFrame = o * CFrame.new(b[2]),
+			Color = Theme.color.wood, Material = Enum.Material.Wood, CanCollide = true, Parent = self.model,
+		})
+	end
+
+	-- Оси данных на земле: x вдоль ближнего края (y = 0), y вдоль левого края (x = 0)
+	Gui.part({ Name = "AxisX", Size = Vector3.new(L, 0.04, 0.1), CFrame = self:cfAt(self.W / 2, 0, 0.02), Color = Theme.color.axis, Parent = self.model })
+	Gui.part({ Name = "AxisY", Size = Vector3.new(0.1, 0.04, D), CFrame = self:cfAt(0, self.H / 2, 0.02), Color = Theme.color.axis, Parent = self.model })
+	local function tick(x: number, y: number, text: string)
+		Gui.billboard(self:_attach(x, y, 0.5), text, { Size = UDim2.fromOffset(60, 26), StudsOffsetWorldSpace = Vector3.zero, MaxDistance = 45 })
+	end
+	for i = 0, self.W do
+		tick(i, -0.2, tostring(i))
+	end
+	for i = 1, self.H do
+		tick(-0.2, i, tostring(i))
+	end
+	tick(self.W + 0.45, 0, "x, м")
+	tick(0, self.H + 0.3, "y, м")
+
+	-- Пунктир x = x̄ — ось вращения прямой (цвет «среднее»)
+	local z = 0
+	while z < self.H - 0.05 do
+		Gui.part({ Name = "MeanDash", Size = Vector3.new(0.07, 0.03, 0.12 * self.S), CFrame = self:cfAt(self.pivotX, z + 0.06, 0.015), Color = Theme.color.mean, Parent = self.model })
+		z += 0.25
+	end
+end
+
+function Flowerbed:_buildFlowers()
+	for i = 1, self.n do
+		local x, y = self.x[i], self.y[i]
+		local base = self:cfAt(x, y, 0)
+		local flower = Gui.make("Model", { Name = "Flower" .. i })
+		Gui.part({ Name = "Point", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.08, 0.8, 0.8),
+			CFrame = base * CFrame.new(0, 0.04, 0) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(25, 25, 25), Parent = flower })
+		Gui.part({ Name = "Stem", Size = Vector3.new(0.22, 2.2, 0.22), CFrame = base * CFrame.new(0, 1.1, 0), Color = Theme.color.stem, CanQuery = true, Parent = flower })
+		Gui.part({ Name = "Leaf", Size = Vector3.new(0.7, 0.08, 0.32), CFrame = base * CFrame.new(0.32, 0.8, 0) * CFrame.Angles(0, 0, math.rad(25)), Color = Theme.color.stem, Parent = flower })
+		local head = Gui.part({ Name = "Head", Shape = Enum.PartType.Ball, Size = Vector3.new(0.62, 0.62, 0.62),
+			CFrame = base * CFrame.new(0, 2.45, 0), Color = Theme.color.flowerCore, CanQuery = true, Parent = flower })
+		local petal = Theme.color.petals[(i - 1) % #Theme.color.petals + 1]
+		for k = 0, 5 do
+			local a = k * math.pi / 3
+			Gui.part({ Name = "Petal", Shape = Enum.PartType.Ball, Size = Vector3.new(0.55, 0.55, 0.3),
+				CFrame = base * CFrame.new(math.cos(a) * 0.48, 2.45 + math.sin(a) * 0.48, -0.05), Color = petal, CanQuery = true, Parent = flower })
+		end
+		Gui.billboard(head, tostring(i), { Size = UDim2.fromOffset(30, 30), StudsOffsetWorldSpace = Vector3.new(0, 1.0, 0), MaxDistance = 50 })
+
+		local prompt = Gui.make("ProximityPrompt", {
+			ActionText = Strings.prompt.thread,
+			ObjectText = Strings.prompt.flower:format(i),
+			KeyboardKeyCode = Enum.KeyCode.F,
+			HoldDuration = 0,
+			MaxActivationDistance = 10,
+			RequiresLineOfSight = false,
+			Exclusivity = Enum.ProximityPromptExclusivity.OnePerButton,
+			Enabled = false,
+			Parent = head,
+		})
+		flower.Parent = self.model
+		self.flowers[i] = { model = flower, head = head, prompt = prompt }
+		self:_buildCard(i, head)
+	end
+end
+
+function Flowerbed:_buildCard(i: number, head: BasePart)
+	local bb = Gui.make("BillboardGui", {
+		Name = "Card", Adornee = head, Size = UDim2.fromOffset(270, 214), StudsOffsetWorldSpace = Vector3.new(0, 3.2, 0),
+		AlwaysOnTop = true, LightInfluence = 0, MaxDistance = 80, Enabled = false, ResetOnSpawn = false,
+	})
+	local bg = Gui.frame({ Size = UDim2.fromScale(1, 1), BackgroundColor3 = Theme.color.bg, BackgroundTransparency = 0.08, Parent = bb })
+	Gui.corner().Parent = bg
+	Gui.make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), PaddingTop = UDim.new(0, 8), Parent = bg })
+	Gui.make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2), Parent = bg })
+	Gui.label({ Text = Strings.card.title:format(i), Font = Theme.fontBold, TextSize = 20, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = 0, Parent = bg })
+	local values = {}
+	for order, key in { "x", "y", "yhat", "e", "e2", "share" } do
+		local row = Gui.frame({ BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 28), LayoutOrder = order, Parent = bg })
+		Gui.label({ Text = Strings.card[key], TextSize = 17, TextColor3 = Theme.color.textDim, Size = UDim2.fromScale(0.6, 1), Parent = row })
+		values[key] = Gui.label({ TextSize = 18, Font = Theme.fontBold, TextXAlignment = Enum.TextXAlignment.Right,
+			Size = UDim2.fromScale(0.4, 1), Position = UDim2.fromScale(0.6, 0), Parent = row })
+	end
+	bb.Parent = head
+	self.cards[i] = { gui = bb, values = values }
+end
+
+function Flowerbed:_buildLine()
+	self.line = Gui.part({ Name = "Line", Size = Vector3.new(0.25, 0.25, 1), Color = Theme.color.line, Material = Enum.Material.Neon, Parent = self.model })
+	-- Ось вращения (x̄; h): оранжевый — «высота прямой»
+	self.pivot = Gui.part({ Name = "Pivot", Shape = Enum.PartType.Ball, Size = Vector3.new(0.6, 0.6, 0.6), Color = Theme.color.c, Parent = self.model })
+	-- Метка высоты на оси y
+	self.hTick = Gui.part({ Name = "HeightTick", Size = Vector3.new(0.6, 0.08, 0.18), Color = Theme.color.c, Parent = self.model })
+end
+
+function Flowerbed:_buildResiduals()
+	for i = 1, self.n do
+		local t = Gui.part({ Name = "Thread" .. i, Size = Vector3.new(0.15, 0.15, 1), Color = Theme.color.residual, Transparency = 1, Parent = self.model })
+		local bb, lbl = Gui.billboard(t, "", { Size = UDim2.fromOffset(150, 30), StudsOffsetWorldSpace = Vector3.new(0, 1.3, 0), Enabled = false })
+		lbl.TextColor3 = Theme.color.residual
+		self.threads[i] = t
+		self.threadLabels[i] = { gui = bb, label = lbl }
+		self.squares[i] = Gui.part({ Name = "Square" .. i, Size = Vector3.new(1, 0.05, 1), Color = Theme.color.residual, Transparency = 1, Parent = self.model })
+	end
+end
+
+function Flowerbed:_buildPedestal()
+	local D = self.H * self.S
+	local o = self.origin
+	local post = Gui.part({ Name = "Pedestal", Size = Vector3.new(1.6, 2.6, 1.0), CFrame = o * CFrame.new(0, 1.3, D / 2 + 3.5),
+		Color = Theme.color.wood, Material = Enum.Material.Wood, CanCollide = true, Parent = self.model })
+	local top = Gui.part({ Name = "PedestalTop", Size = Vector3.new(2.6, 0.2, 1.7),
+		CFrame = o * CFrame.new(0, 2.7, D / 2 + 3.5) * CFrame.Angles(math.rad(25), 0, 0), Color = Theme.color.bg, Parent = self.model })
+	local sg = Gui.make("SurfaceGui", { Face = Enum.NormalId.Top, SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud, PixelsPerStud = 60, LightInfluence = 0 })
+	Gui.label({ Size = UDim2.fromScale(1, 1), Text = Strings.prompt.pedestal .. "\nQ/E · Shift/Ctrl", TextSize = 26, Font = Theme.fontBold,
+		TextXAlignment = Enum.TextXAlignment.Center, Parent = sg })
+	sg.Parent = top
+	self.pedestal = post
+	self.controlPrompt = Gui.make("ProximityPrompt", {
+		ActionText = Strings.prompt.control,
+		ObjectText = Strings.prompt.pedestal,
+		KeyboardKeyCode = Enum.KeyCode.F,
+		HoldDuration = 0,
+		MaxActivationDistance = 10,
+		RequiresLineOfSight = false,
+		Enabled = false,
+		Parent = post,
+	})
+end
+
+-- ───── отрисовка ─────
+
+-- snap: снимок LineModel; vis.threadGrow[i], vis.squareGrow[i] ∈ [0; 1]
+function Flowerbed:render(snap, vis)
+	local S = self.S
+	local rot = self.origin.Rotation
+
+	local x0, y0, x1, y1 = BedGeometry.clipLine(snap.m, snap.c, self.W, self.H)
+	if x0 then
+		local p0, p1 = self:toWorld(x0, y0, LINE_LIFT), self:toWorld(x1, y1, LINE_LIFT)
+		self.line.Size = Vector3.new(0.25, 0.25, (p1 - p0).Magnitude)
+		self.line.CFrame = CFrame.lookAt((p0 + p1) / 2, p1, self.origin.UpVector)
+		self.line.Transparency = 0
+	else
+		self.line.Transparency = 1
+	end
+	self.pivot.CFrame = self:cfAt(self.pivotX, snap.h, LINE_LIFT)
+	self.hTick.CFrame = self:cfAt(-0.1, snap.h, 0.05)
+
+	for i = 1, self.n do
+		local x, y, yhat = self.x[i], self.y[i], snap.yhat[i]
+		local g = vis.threadGrow[i] or 0
+		local t, tl = self.threads[i], self.threadLabels[i]
+		if g > 0 then
+			local _, ty0, _, ty1 = BedGeometry.thread(x, y, yhat, g)
+			local len = math.abs(ty1 - ty0) * S
+			if len < 0.03 then
+				t.Transparency = 1
+			else
+				t.Transparency = 0
+				t.Size = Vector3.new(0.15, 0.15, len)
+				t.CFrame = CFrame.new(self:toWorld(x, (ty0 + ty1) / 2, THREAD_LIFT)) * rot
+			end
+			local e = snap.e[i]
+			tl.gui.Enabled = g >= 1 and math.abs(e) >= 0.005
+			tl.label.Text = "e = " .. Format.signed(e) .. Format.NBSP .. "м"
+		else
+			t.Transparency = 1
+			tl.gui.Enabled = false
+		end
+
+		local sg = vis.squareGrow[i] or 0
+		local sq = self.squares[i]
+		if sg > 0 then
+			local cx, cy, side = BedGeometry.square(x, y, yhat, self.pivotX, sg)
+			if side * S < 0.03 then
+				sq.Transparency = 1
+			else
+				sq.Transparency = 0.5
+				sq.Size = Vector3.new(side * S, 0.05, side * S)
+				sq.CFrame = CFrame.new(self:toWorld(cx, cy, SQUARE_LIFT)) * rot
+			end
+		else
+			sq.Transparency = 1
+		end
+	end
+	self:_renderCards(snap, vis)
+end
+
+function Flowerbed:_renderCards(snap, vis)
+	local now = os.clock()
+	for i, card in self.cards do
+		local hovered = self.cardHover ~= nil and self.cardHover.i == i and now - self.cardHover.t >= 0.15
+		local show = self.cardPinned[i] == true or hovered
+		card.gui.Enabled = show
+		if show then
+			local v = card.values
+			local hasThread = (vis.threadGrow[i] or 0) >= 1
+			v.x.Text = Format.len(self.x[i])
+			v.y.Text = Format.len(self.y[i])
+			v.yhat.Text = Format.len(snap.yhat[i])
+			if hasThread then
+				v.e.Text = Format.signed(snap.e[i]) .. Format.NBSP .. "м"
+				v.e2.Text = Format.area(snap.sq[i])
+				v.share.Text = if snap.L > 1e-12 then Format.percent(snap.sq[i] / snap.L) else "—"
+			else
+				v.e.Text, v.e2.Text, v.share.Text = "?", "?", "?"
+			end
+		end
+	end
+end
+
+-- ───── карточки: наведение (ПК, 150 мс) и тап/клик (все устройства) ─────
+
+function Flowerbed:toggleCard(i: number)
+	self.cardPinned[i] = not self.cardPinned[i]
+end
+
+function Flowerbed:bindCards(onChanged: () -> ())
+	local camera = workspace.CurrentCamera
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	local models = {}
+	for _, f in self.flowers do
+		table.insert(models, f.model)
+	end
+	params.FilterDescendantsInstances = models
+
+	local function pick(ray: Ray): number?
+		local r = workspace:Raycast(ray.Origin, ray.Direction * 300, params)
+		if not r then
+			return nil
+		end
+		for i, f in self.flowers do
+			if r.Instance:IsDescendantOf(f.model) then
+				return i
+			end
+		end
+		return nil
+	end
+
+	UserInputService.InputBegan:Connect(function(input, gp)
+		if gp or input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+			return
+		end
+		local i = pick(camera:ScreenPointToRay(input.Position.X, input.Position.Y))
+		if i then
+			self:toggleCard(i)
+			onChanged()
+		end
+	end)
+	UserInputService.TouchTap:Connect(function(positions, gp)
+		if gp or #positions == 0 then
+			return
+		end
+		local p = positions[1]
+		local i = pick(camera:ScreenPointToRay(p.X, p.Y))
+		if i then
+			self:toggleCard(i)
+			onChanged()
+		end
+	end)
+
+	local acc = 0
+	RunService.Heartbeat:Connect(function(dt)
+		acc += dt
+		if acc < 0.05 or not UserInputService.MouseEnabled then
+			return
+		end
+		acc = 0
+		local m = UserInputService:GetMouseLocation()
+		local i = pick(camera:ViewportPointToRay(m.X, m.Y))
+		local cur = self.cardHover
+		if i == nil then
+			if cur then
+				self.cardHover = nil
+				onChanged()
+			end
+		elseif cur == nil or cur.i ~= i then
+			self.cardHover = { i = i, t = os.clock() }
+		elseif os.clock() - cur.t >= 0.15 and not cur.shown then
+			cur.shown = true
+			onChanged()
+		end
+	end)
+end
+
+return Flowerbed
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000020"><Properties><string name="Name">NextBoard</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- NextBoard: второе табло (3D.6). Скрыто до вызова rise(): поднимается из-под земли за ≤ 2 с,
+-- на экране — превью параболы игрока; ProximityPrompt «Продолжить обучение» открывает 2D experience.
+
+local TweenService = game:GetService("TweenService")
+
+local Regression = script.Parent.Parent
+local Config = require(Regression.Core.Config)
+local Theme = require(Regression.UI.Theme)
+local Gui = require(Regression.UI.Gui)
+local Strings = require(Regression.UI.Strings)
+local PlotView2D = require(Regression.UI.PlotView2D)
+
+local NextBoard = {}
+NextBoard.__index = NextBoard
+
+local W_STUDS, H_STUDS = 14, 7.875 -- 700 × 394 px при 50 px/stud
+
+-- args: parent, cframe (итоговый центр экрана), groundY, playerGui, onContinue
+function NextBoard.new(args)
+	local self = setmetatable({}, NextBoard)
+	self.parent = args.parent
+	self.finalCF = args.cframe :: CFrame
+	self.model = Gui.make("Model", { Name = "RegressionNextBoard" })
+	local cf = self.finalCF
+	self.screen = Gui.part({ Name = "Screen", Size = Vector3.new(W_STUDS, H_STUDS, 0.4), CFrame = cf, Color = Theme.color.bg, Parent = self.model })
+	Gui.part({ Name = "Frame", Size = Vector3.new(W_STUDS + 0.8, H_STUDS + 0.8, 0.3), CFrame = cf * CFrame.new(0, 0, 0.3),
+		Color = Theme.color.boardFrame, Parent = self.model })
+	local legH = (cf.Position.Y - H_STUDS / 2) - args.groundY + 0.4
+	Gui.part({ Name = "Leg", Size = Vector3.new(0.8, legH, 0.8), CFrame = cf * CFrame.new(0, -H_STUDS / 2 - legH / 2 + 0.4, 0.45),
+		Color = Theme.color.boardFrame, CanCollide = true, Parent = self.model })
+	self.model.PrimaryPart = self.screen
+	self.depth = H_STUDS + legH + 1 -- на сколько опустить под землю
+
+	self.prompt = Gui.make("ProximityPrompt", {
+		ActionText = Strings.prompt.continue,
+		ObjectText = Strings.prompt.board2,
+		KeyboardKeyCode = Enum.KeyCode.F,
+		HoldDuration = 0,
+		MaxActivationDistance = 16,
+		RequiresLineOfSight = false,
+		Enabled = false,
+		Parent = self.screen,
+	})
+	self.prompt.Triggered:Connect(function()
+		if args.onContinue then
+			args.onContinue()
+		end
+	end)
+
+	self.gui = Gui.make("SurfaceGui", {
+		Name = "RegressionNextBoardGui", Adornee = self.screen, Face = Enum.NormalId.Front,
+		SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud, PixelsPerStud = 50, LightInfluence = 0,
+		ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Enabled = false, Parent = args.playerGui,
+	})
+	local root = Gui.frame({ Size = UDim2.fromScale(1, 1), BackgroundColor3 = Theme.color.bg, Parent = self.gui })
+	Gui.label({ Position = UDim2.fromOffset(24, 12), Size = UDim2.fromOffset(660, 44), Text = Strings.screen2d.boardTitle,
+		TextSize = 36, Font = Theme.fontBold, Parent = root })
+	Gui.label({ Position = UDim2.fromOffset(24, 56), Size = UDim2.fromOffset(300, 300), Text = Strings.screen2d.boardBody .. "\n\n<b>dL/dm = 0</b>",
+		TextSize = 26, TextYAlignment = Enum.TextYAlignment.Top, Parent = root })
+	local holder = Gui.frame({ BackgroundTransparency = 1, Position = UDim2.fromOffset(330, 60), Size = UDim2.fromOffset(360, 320), Parent = root })
+	self.plot = PlotView2D.new(holder, {
+		xMin = -1, xMax = 1.5, yMin = 0, yMax = 2,
+		xTicks = { -1, 0, 1 }, yTicks = { 0, 1, 2 },
+		padL = 40, padR = 8, padT = 12, padB = 36, fontSize = 18,
+		fallbackW = 312, fallbackH = 272,
+	})
+	return self
+end
+
+function NextBoard:setParabola(P, records)
+	local L = self.plot:layer("parabola", 3)
+	L:begin()
+	if P then
+		L:curve(function(m)
+			return P.a * m * m + P.b * m + P.k
+		end, -1, 1.5, 80, { color = Theme.color.loss, thickness = 3 })
+		L:dashedV(P.tStar, 0, P.vStar, { color = Theme.color.flag, thickness = 2 })
+		for _, r in records or {} do
+			L:dot(r.m, r.mse, { color = Theme.color.loss, size = 12 })
+		end
+		L:dot(P.tStar, P.vStar, { color = Theme.color.flag, size = 14 })
+	end
+	L:finish()
+end
+
+function NextBoard:rise(onDone: (() -> ())?)
+	local target = self.finalCF
+	self.model:PivotTo(target * CFrame.new(0, -self.depth, 0))
+	self.model.Parent = self.parent
+	self.gui.Enabled = true
+	local v = Instance.new("CFrameValue")
+	v.Value = target * CFrame.new(0, -self.depth, 0)
+	v.Changed:Connect(function(cf)
+		self.model:PivotTo(cf)
+	end)
+	local tw = TweenService:Create(v, TweenInfo.new(Config.BOARD2_RISE_S, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Value = target })
+	tw.Completed:Connect(function()
+		v:Destroy()
+		self.prompt.Enabled = true
+		if onDone then
+			onDone()
+		end
+	end)
+	tw:Play()
+end
+
+return NextBoard
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000021"><Properties><string name="Name">Scoreboard</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- Scoreboard: табло у клумбы. Part-экран + SurfaceGui в PlayerGui (иначе кнопки на нём не нажимаются).
+-- Слева — параметры (m, h и c, ŷ, MSE, λ), сообщение шага и кнопка записи; справа — график «MSE от наклона»:
+-- живой маркер текущей прямой, записи, бледные записи другой высоты, парабола и флажок минимума.
+
+local Regression = script.Parent.Parent
+local Records = require(Regression.Core.Records)
+local Format = require(Regression.Core.Format)
+local Theme = require(Regression.UI.Theme)
+local Gui = require(Regression.UI.Gui)
+local Strings = require(Regression.UI.Strings)
+local PlotView2D = require(Regression.UI.PlotView2D)
+
+local Scoreboard = {}
+Scoreboard.__index = Scoreboard
+
+local PPS = 50 -- пикселей на stud
+local W_STUDS, H_STUDS = 20, 11.25 -- 1000 × 562 px
+
+-- args: parent, cframe (центр экрана, −Z смотрит на игрока), playerGui, onRecord
+function Scoreboard.new(args)
+	local self = setmetatable({}, Scoreboard)
+	self.onRecord = args.onRecord
+	self.model = Gui.make("Model", { Name = "RegressionScoreboard" })
+	local cf = args.cframe :: CFrame
+	self.screen = Gui.part({ Name = "Screen", Size = Vector3.new(W_STUDS, H_STUDS, 0.4), CFrame = cf, Color = Theme.color.bg, Parent = self.model })
+	Gui.part({ Name = "Frame", Size = Vector3.new(W_STUDS + 0.8, H_STUDS + 0.8, 0.3), CFrame = cf * CFrame.new(0, 0, 0.3),
+		Color = Theme.color.boardFrame, Parent = self.model })
+	local bottomY = cf.Position.Y - H_STUDS / 2
+	local groundY = args.groundY or (bottomY - 1.5)
+	for _, dx in { -W_STUDS / 2 + 1.5, W_STUDS / 2 - 1.5 } do
+		local legH = bottomY - groundY + 0.4
+		Gui.part({ Name = "Leg", Size = Vector3.new(0.6, legH, 0.6), CFrame = cf * CFrame.new(dx, -H_STUDS / 2 - legH / 2 + 0.4, 0.45),
+			Color = Theme.color.boardFrame, CanCollide = true, Parent = self.model })
+	end
+	self.model.Parent = args.parent
+
+	self.gui = Gui.make("SurfaceGui", {
+		Name = "RegressionScoreboardGui",
+		Adornee = self.screen,
+		Face = Enum.NormalId.Front,
+		SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud,
+		PixelsPerStud = PPS,
+		LightInfluence = 0,
+		ResetOnSpawn = false,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		Parent = args.playerGui,
+	})
+	self:_buildLeft()
+	self:_buildPlot()
+	self:_buildIdle()
+	return self
+end
+
+function Scoreboard:_buildLeft()
+	local root = Gui.frame({ Size = UDim2.fromScale(1, 1), BackgroundColor3 = Theme.color.bg, Parent = self.gui })
+	self.root = root
+	local function row(y: number, h: number, size: number, bold: boolean?)
+		return Gui.label({ Position = UDim2.fromOffset(28, y), Size = UDim2.fromOffset(380, h), TextSize = size,
+			Font = if bold then Theme.fontBold else Theme.font, Parent = root })
+	end
+	self.title = row(12, 44, 32, true)
+	self.title.Text = Strings.boardTitle
+	self.rowM = row(66, 42, 32, true)
+	self.rowH = row(110, 42, 28)
+	self.rowEq = row(152, 36, 26)
+	self.rowMse = row(192, 48, 36, true)
+	self.rowMseFormula = row(240, 32, 22)
+	self.rowLambda = row(276, 34, 24)
+	self.message = row(316, 118, 24)
+	self.message.TextYAlignment = Enum.TextYAlignment.Top
+	self.message.TextScaled = true -- длинные сообщения ужимаются, но не крупнее 24 px
+	Gui.make("UITextSizeConstraint", { MaxTextSize = 24, MinTextSize = 16, Parent = self.message })
+	self.message.TextColor3 = Theme.color.text
+
+	self.recordBtn = Gui.button({
+		Position = UDim2.fromOffset(28, 444), Size = UDim2.fromOffset(372, 58), TextSize = 28,
+		BackgroundColor3 = Theme.color.loss, TextColor3 = Theme.color.bg, Text = Strings.recordBtn, Visible = false, Parent = root,
+	})
+	self.recordBtn.Activated:Connect(function()
+		if self.onRecord then
+			self.onRecord()
+		end
+	end)
+	self.recordCounter = row(508, 40, 24)
+	self.recordCounter.TextColor3 = Theme.color.textDim
+end
+
+function Scoreboard:_buildPlot()
+	local holder = Gui.frame({ BackgroundTransparency = 1, Position = UDim2.fromOffset(420, 14), Size = UDim2.fromOffset(566, 534), Parent = self.root })
+	Gui.label({ Text = Strings.plotTitle, Position = UDim2.fromOffset(64, 0), Size = UDim2.fromOffset(480, 30), TextSize = 26,
+		Font = Theme.fontBold, Parent = holder })
+	local inner = Gui.frame({ BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, 0, 1, -26), Parent = holder })
+	self.plot = PlotView2D.new(inner, {
+		xMin = -1, xMax = 1.5, yMin = 0, yMax = 2,
+		xTicks = { -1, -0.5, 0, 0.5, 1, 1.5 }, yTicks = { 0, 0.5, 1, 1.5, 2 },
+		xLabel = Strings.plotX, yLabel = Strings.plotY,
+		padL = 62, padR = 14, padT = 40, padB = 70, fontSize = 22,
+		fallbackW = 566 - 62 - 14, fallbackH = 508 - 40 - 70,
+	})
+	self.plot.onResize = function()
+		self.dirty = true
+	end
+end
+
+function Scoreboard:_buildIdle()
+	self.idle = Gui.frame({ Size = UDim2.fromScale(1, 1), BackgroundColor3 = Theme.color.bg, ZIndex = 50, Parent = self.gui })
+	Gui.label({ Size = UDim2.fromScale(1, 1), Text = Strings.boardIdle, TextSize = 44, Font = Theme.fontBold, ZIndex = 51,
+		TextColor3 = Theme.color.textDim, TextXAlignment = Enum.TextXAlignment.Center, Parent = self.idle })
+end
+
+function Scoreboard:setActive(on: boolean)
+	self.idle.Visible = not on
+end
+
+function Scoreboard:setMessage(text: string, color: Color3?)
+	self.message.Text = text
+	self.message.TextColor3 = color or Theme.color.text
+end
+
+-- snap: LineModel-снимок; st: { records, parabola, recordEnabled, showMseFormula, bestLine }
+function Scoreboard:render(snap, st)
+	local tok = Theme.tok
+	self.rowM.Text = ("%s  <font size=\"24\">%s</font>   %s"):format(tok("mText", "m"), Strings.slopeName, Format.coef(snap.m))
+	self.rowH.Text = ("%s  <font size=\"22\">%s</font>  %s     %s = %s"):format(
+		tok("c", "h"), Strings.heightName, Format.len(snap.h), tok("c", "c"), Format.len(snap.c))
+	self.rowEq.Text = ("ŷ = %s·x + %s"):format(tok("mText", Format.coef(snap.m)), tok("c", Format.num(snap.c, 2)))
+	self.rowMse.Text = ("%s = %s"):format(tok("residual", "MSE"), Format.mse(snap.mse))
+	if st.showMseFormula then
+		self.rowMseFormula.Text = ("MSE = Σe² / %d = %s / %d"):format(snap.n, Format.num(snap.L, 3), snap.n)
+	else
+		self.rowMseFormula.Text = ""
+	end
+	self.rowLambda.Text = ("%s = %s   <font color=\"%s\">%s</font>"):format(tok("penalty", "λ"), Format.lambda(0), Theme.hex.textDim, Strings.lambdaNote)
+
+	local cur = Records.atHeight(st.records, snap.h)
+	self.recordBtn.Visible = st.recordEnabled == true
+	if st.recordEnabled or #st.records > 0 then
+		self.recordCounter.Text = if st.parabola then Strings.recordsDone
+			else Strings.recordCounter:format(Format.len(snap.h), #cur)
+	else
+		self.recordCounter.Text = ""
+	end
+
+	self:_renderPlot(snap, st, cur)
+end
+
+function Scoreboard:_renderPlot(snap, st, cur)
+	local plot = self.plot
+	local anyStale = #cur < #st.records
+
+	local stale = plot:layer("stale", 3)
+	stale:begin()
+	for _, r in st.records do
+		if not Records.sameHeight(r.h, snap.h) then
+			stale:dot(r.m, r.mse, { color = Theme.color.textDim, size = 14, transparency = 0.6 })
+		end
+	end
+	stale:finish()
+
+	local P = st.parabola
+	local par = plot:layer("parabola", 4)
+	par:begin()
+	if P then
+		local sameH = Records.sameHeight(P.h, snap.h)
+		local tr = if sameH then 0 else 0.6
+		par:curve(function(m)
+			return P.a * m * m + P.b * m + P.k
+		end, -1, 1.5, 100, { color = Theme.color.loss, thickness = 3, transparency = tr })
+		par:dashedV(P.tStar, 0, P.vStar, { color = Theme.color.flag, thickness = 2, transparency = tr })
+		par:dot(P.tStar, P.vStar, { color = Theme.color.flag, size = 18, transparency = tr })
+		par:label(P.tStar, P.vStar, ("m* = %s"):format(Format.coef(P.tStar)), {
+			dx = 12, dy = -10, anchor = Vector2.new(0, 1), size = 24, font = Theme.fontBold, color = Theme.color.flag, transparency = tr,
+		})
+		if not sameH then
+			par:labelPx(8, 8, Strings.parabolaOtherH:format(Format.len(P.h)), { anchor = Vector2.new(0, 0), size = 18, color = Theme.color.textDim })
+		end
+	end
+	if anyStale then
+		par:labelPx(8, if P then 32 else 8, Strings.staleNote, { anchor = Vector2.new(0, 0), size = 18, color = Theme.color.textDim })
+	end
+	par:finish()
+
+	local recs = plot:layer("records", 5)
+	recs:begin()
+	for _, r in cur do
+		recs:dot(r.m, r.mse, { color = Theme.color.loss, size = 16, strokeColor = Theme.color.bg })
+	end
+	recs:finish()
+
+	-- текущее положение прямой — с шага записей (до него график пуст: точки «заносятся с п. 4»)
+	local live = plot:layer("live", 6)
+	live:begin()
+	if st.recordEnabled or P or #st.records > 0 then
+		live:dot(snap.m, snap.mse, { color = Theme.color.line, size = 20, hollow = true })
+	end
+	live:finish()
+end
+
+return Scoreboard
+]]></ProtectedString></Properties></Item></Item></Item></Item><Item class="ServerScriptService" referent="RBX00000026"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Script" referent="RBX00000025"><Properties><string name="Name">RegressionTests</string><ProtectedString name="Source"><![CDATA[-- RegressionTests: прогон автотестов ядра и логики 3D при запуске в Studio (в опубликованной игре не выполняется).
+-- Ожидаемый вывод в Output: «MathCore: 110/110», «Logic3D: 62/62», «ИТОГО: 172/172».
+local RunService = game:GetService("RunService")
+if not RunService:IsStudio() then
+	return
+end
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Regression = ReplicatedStorage:WaitForChild("Regression")
+local MathCore = require(Regression.MathCore)
+local Datasets = require(Regression.Data.Datasets)
+local Expected = require(Regression.Data.ExpectedValues)
+
+local c1, f1 = require(Regression.Tests.MathCoreSpec)(MathCore, Datasets, Expected)
+local c2, f2 = require(Regression.Tests.LogicSpec)({
+	MathCore = MathCore,
+	Datasets = Datasets,
+	Format = require(Regression.Core.Format),
+	BedGeometry = require(Regression.Core.BedGeometry),
+	Records = require(Regression.Core.Records),
+	LineModel = require(Regression.Core.LineModel),
+	Store = require(Regression.Core.Store),
+})
+local total, failed = c1 + c2, f1 + f2
+if failed > 0 then
+	warn(("Regression ИТОГО: %d/%d — есть упавшие проверки, смотри FAIL выше"):format(total - failed, total))
+else
+	print(("Regression ИТОГО: %d/%d"):format(total, total))
+end
+]]></ProtectedString><bool name="Disabled">false</bool></Properties></Item></Item><Item class="StarterPlayer" referent="RBX00000029"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000028"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="LocalScript" referent="RBX00000027"><Properties><string name="Name">RegressionClient</string><ProtectedString name="Source"><![CDATA[--!nonstrict
+-- RegressionClient: точка входа 3D experience модуля «Регрессия».
+-- Всё обучение — на клиенте: клумба, табло и UI создаются локально, у каждого игрока своя клумба.
+-- Где строить: Part "FlowerbedAnchor" в Workspace (низ детали = земля; табло — со стороны Front детали).
+-- Без якоря клумба ставится в 30 studs перед SpawnLocation.
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Regression = ReplicatedStorage:WaitForChild("Regression")
+local MathCore = require(Regression.MathCore)
+local Datasets = require(Regression.Data.Datasets)
+local Config = require(Regression.Core.Config)
+local Store = require(Regression.Core.Store)
+local LineModel = require(Regression.Core.LineModel)
+local Hud = require(Regression.UI.Hud)
+local Screen2D = require(Regression.UI.Screen2D)
+local Flowerbed = require(Regression.World.Flowerbed)
+local Scoreboard = require(Regression.World.Scoreboard)
+local NextBoard = require(Regression.World.NextBoard)
+local LineControls = require(Regression.Input.LineControls)
+local Flow3D = require(Regression.Scenes.Flow3D)
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local fb = Datasets.flowerbed
+
+-- ───── 1. Место клумбы ─────
+
+local function findOrigin(): CFrame
+	local anchor = workspace:FindFirstChild("FlowerbedAnchor")
+	if anchor and anchor:IsA("BasePart") then
+		local cf = anchor.CFrame * CFrame.new(0, -anchor.Size.Y / 2, 0)
+		local _, yaw, _ = cf:ToOrientation()
+		anchor.Transparency = 1
+		anchor.CanCollide = false
+		return CFrame.new(cf.Position) * CFrame.Angles(0, yaw, 0)
+	end
+	local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+	local base = if spawn then spawn.CFrame else CFrame.new()
+	local _, yaw, _ = base:ToOrientation()
+	local flat = CFrame.new(base.Position) * CFrame.Angles(0, yaw, 0)
+	local probe = flat * CFrame.new(0, 60, -30)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { player.Character or Instance.new("Folder") }
+	local hit = workspace:Raycast(probe.Position, Vector3.new(0, -200, 0), params)
+	local y = if hit then hit.Position.Y else base.Position.Y
+	return CFrame.new(probe.Position.X, y, probe.Position.Z) * CFrame.Angles(0, yaw, 0)
+end
+
+local origin = findOrigin()
+local world = Instance.new("Folder")
+world.Name = "RegressionWorld"
+world.Parent = workspace
+
+-- ───── 2. Состояние и модель ─────
+
+local threads = table.create(#fb.x_m, false)
+local store = Store.new({
+	scene = "",
+	m = fb.start_line.m,
+	h = fb.start_line.h,
+	threads = threads,
+	records = {},
+	parabola = nil,
+	honey = 0,
+	predictions = {},
+	inZone = false,
+	controlUnlocked = false,
+	controlMode = false,
+	recordEnabled = false,
+	movedSlope = false,
+	movedHeight = false,
+	showMseFormula = false,
+	opened2D = false,
+})
+local lineModel = LineModel.new(MathCore, fb)
+
+-- ───── 3. Мир и UI ─────
+
+local D = fb.bed_width_m * Config.STUDS_PER_M
+local hud = Hud.new(playerGui)
+local screen2d = Screen2D.new(playerGui)
+local bed = Flowerbed.new({ parent = world, origin = origin, data = fb })
+
+local flow -- объявлен заранее: кнопки табло ссылаются на него
+local board = Scoreboard.new({
+	parent = world,
+	cframe = origin * CFrame.new(0, 1.2 + 11.25 / 2, -(D / 2 + 4)) * CFrame.Angles(0, math.pi, 0),
+	groundY = origin.Position.Y,
+	playerGui = playerGui,
+	onRecord = function()
+		flow:record()
+	end,
+})
+local nextBoard = NextBoard.new({
+	parent = world,
+	cframe = origin * CFrame.new(20, 1.2 + 7.875 / 2, -(D / 2 + 4)) * CFrame.Angles(0, math.pi, 0),
+	groundY = origin.Position.Y,
+	playerGui = playerGui,
+	onContinue = function()
+		flow:openScreen2D()
+	end,
+})
+
+local prompts = { bed.controlPrompt }
+for _, f in bed.flowers do
+	table.insert(prompts, f.prompt)
+end
+local controls = LineControls.new({
+	store = store,
+	hud = hud,
+	prompts = prompts,
+	onRecord = function()
+		flow:record()
+	end,
+})
+
+flow = Flow3D.new({
+	store = store, hud = hud, bed = bed, board = board, nextBoard = nextBoard,
+	controls = controls, lineModel = lineModel, MathCore = MathCore, screen2d = screen2d,
+})
+
+-- ───── 4. Цикл: клумба — каждый кадр при изменениях, табло — не чаще 30 Гц ─────
+
+local dirtyWorld, dirtyBoard = true, true
+store.Changed:Connect("*", function()
+	dirtyWorld, dirtyBoard = true, true
+end)
+bed:bindCards(function()
+	dirtyWorld = true
+end)
+
+flow:start()
+
+local uiAcc = 0
+RunService.RenderStepped:Connect(function(dt)
+	controls:step(dt)
+
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if root then
+		store:set("inZone", bed:distanceTo(root.Position) <= Config.ZONE_STUDS)
+	end
+
+	local now = os.clock()
+	local snap = lineModel:compute(store:get("m"), store:get("h"))
+	local vis = flow:visuals(now)
+	if dirtyWorld or vis.animating or bed.cardHover ~= nil then
+		dirtyWorld = false
+		bed:render(snap, vis)
+	end
+
+	flow:tick(snap, now)
+
+	uiAcc += dt
+	if (dirtyBoard or board.dirty) and uiAcc >= 1 / Config.UI_HZ then
+		uiAcc = 0
+		dirtyBoard, board.dirty = false, false
+		board:render(snap, {
+			records = store:get("records"),
+			parabola = store:get("parabola"),
+			recordEnabled = store:get("recordEnabled"),
+			showMseFormula = store:get("showMseFormula"),
+		})
+	end
+end)
+]]></ProtectedString><bool name="Disabled">false</bool></Properties></Item></Item></Item></roblox>
