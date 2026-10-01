@@ -41,19 +41,26 @@ local progress = R.newInstance("RemoteEvent")
 progress.Name = "RegressionProgress"
 progress.Parent = remotes
 
--- якоря уровня, как в SkRob (tools/level.py): повёрнуты к спауну, земля на y = −30,58
-R.groundY = -30.5758
+-- уровень, как в SkRob (tools/level.py → Core/LevelLayout): якоря повёрнуты к спауну, куб RegressionZone накрывает модуль
+local Layout = R.env.require(G:GetService("ReplicatedStorage").Regression.Core.LevelLayout)
+R.groundY = Layout.groundY
 local level = R.newInstance("Folder")
 level.Name = "RegressionLevel"
 level.Parent = G.Workspace
-for _, a in { { "FlowerbedAnchor", 62, -28, Vector3.new(20, 1, 12) }, { "LoreAnchor", 5, 62, Vector3.new(40, 1, 44) } } do
+for _, a in Layout.anchors do
 	local p = R.newInstance("Part")
-	p.Name = a[1]
-	p.Size = a[4]
-	local pos = Vector3.new(a[2], -30.0758, a[3])
-	p.CFrame = R.CFrame.lookAt(pos, pos + (pos - Vector3.new(3.1, -30.0758, 1.7)))
+	p.Name = a.name
+	p.Size = a.size
+	local pos = Vector3.new(a.x, Layout.groundY + 0.5, a.z)
+	p.CFrame = R.CFrame.lookAt(pos, pos + Vector3.new(pos.X - Layout.spawn.X, 0, pos.Z - Layout.spawn.Z))
 	p.Parent = level
 end
+local zone = R.newInstance("Part")
+zone.Name = "RegressionZone"
+zone.Size = Layout.zone.size
+zone.CFrame = R.CFrame.new(Layout.zone.center)
+zone.Transparency = 0.92
+zone.Parent = level
 
 local client = G:GetService("StarterPlayer").StarterPlayerScripts.RegressionClient
 R.setCharacter(Vector3.new(0, 3, 200))
@@ -68,6 +75,23 @@ ok("HUD создан", hud ~= nil)
 ok("табло создано", board ~= nil)
 ok("экран 2D создан", shellGui ~= nil)
 ok("HUD скрыт вдали от клумбы", hud.Enabled == false)
+ok("куб уровня скрыт в игре", zone.Transparency == 1)
+local function allPrompts()
+	local out = {}
+	for _, d in G.Workspace.RegressionWorld:GetDescendants() do
+		if d:IsA("ProximityPrompt") then table.insert(out, d) end
+	end
+	return out
+end
+local function promptsReachable()
+	local n = 0
+	for _, p in allPrompts() do
+		if p.MaxActivationDistance > 0 then n += 1 end
+	end
+	return n
+end
+ok("вне куба все подсказки модуля недоступны", promptsReachable() == 0 and #allPrompts() >= 7, promptsReachable())
+ok("вне куба inQuestCube = false", R.G.RegressionDebug.inCube() == false)
 local dbg = R.G.RegressionDebug
 ok("отладочный API в Studio", dbg ~= nil)
 
@@ -101,6 +125,8 @@ ok("пульт клумбы — со стороны спауна", toPed:Dot(toS
 R.setCharacter(bed.Soil.Position + Vector3.new(0, 3, 8))
 R.step(0.3)
 ok("HUD виден у клумбы", hud.Enabled == true)
+ok("в кубе подсказки снова доступны", promptsReachable() == #allPrompts(), promptsReachable())
+ok("в кубе inQuestCube = true", R.G.RegressionDebug.inCube() == true)
 ok("3D.2 после входа в зону", hudText():find("3D.2", 1, true) ~= nil, hudText())
 local mse0 = boardMse()
 ok("старт MSE = 0,566", mse0 and math.abs(mse0 - 0.566) < 1e-9, mse0)
@@ -429,6 +455,45 @@ local kinds = {}
 for _, e in nb2.entries do kinds[e.kind] = (kinds[e.kind] or 0) + 1 end
 ok("блокнот: формулы перенесены", (kinds.formula or 0) >= 10, kinds.formula)
 ok("блокнот: заметки", (kinds.note or 0) >= 4, kinds.note)
+
+-- ═════════════ Куб уровня ═════════════
+-- весь мир модуля (включая второе табло и пасеку) целиком внутри куба
+do
+	local half = Layout.zone.size / 2
+	local outside = 0
+	for _, d in G.Workspace.RegressionWorld:GetDescendants() do
+		if d:IsA("BasePart") then
+			local h = d.Size / 2
+			for _, sx in { -1, 1 } do for _, sy in { -1, 1 } do for _, sz in { -1, 1 } do
+				local l = (d.CFrame * Vector3.new(h.X * sx, h.Y * sy, h.Z * sz)) - Layout.zone.center
+				if math.abs(l.X) > half.X or math.abs(l.Y) > half.Y or math.abs(l.Z) > half.Z then
+					outside += 1
+				end
+			end end end
+		end
+	end
+	ok("весь мир модуля внутри куба", outside == 0, outside)
+	-- чужие квесты SkRob вне куба: улей Data Console и зона TreeLevel
+	local function inside(p)
+		local l = p - Layout.zone.center
+		return math.abs(l.X) <= half.X and math.abs(l.Y) <= half.Y and math.abs(l.Z) <= half.Z
+	end
+	ok("улей с Data Console вне куба (углы улья)", not inside(Vector3.new(-43.7 + 15, -15.6, -19.5)) and not inside(Vector3.new(-53.6, -30.1, -11.0)))
+	ok("TreeLevelZone вне куба", not inside(Vector3.new(233.6 - 69, -10.1, 10.3)))
+	ok("спаун внутри куба", inside(Layout.spawn))
+end
+
+-- выход из куба посреди обучения: подсказки и HUD выключаются, экран закрывается
+R.setCharacter(Vector3.new(-120, -27, 0))
+R.step(0.2)
+ok("за кубом HUD скрыт", hud.Enabled == false)
+ok("за кубом подсказки модуля недоступны", promptsReachable() == 0, promptsReachable())
+ok("за кубом экран 2D закрыт", shellGui.Enabled == false)
+local okTrig = pcall(R.trigger, loreModel.Beekeeper.Body.ProximityPrompt)
+ok("за кубом подсказку нельзя активировать", okTrig == false)
+R.setCharacter(loreModel.Beekeeper.Body.Position + Vector3.new(0, 0, 4))
+R.step(0.2)
+ok("возврат в куб: подсказки доступны, HUD виден", promptsReachable() == #allPrompts() and hud.Enabled == true, promptsReachable())
 
 print(("Scenario: %d/%d"):format(checks - fails, checks))
 if fails > 0 then

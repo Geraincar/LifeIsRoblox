@@ -5,6 +5,8 @@
 --   (низ детали — земля; локальная +Z детали смотрит туда, откуда приходит игрок). Высота уточняется лучом вниз;
 --   если земля ещё не подгрузилась (StreamingEnabled), остаётся низ якоря.
 -- Без якорей клумба ставится в 30 studs перед SpawnLocation, пасека — в 60 studs.
+-- Куб уровня Workspace/RegressionLevel/RegressionZone: кнопки квестов модуля (подсказки F, HUD, пульт) работают
+--   только внутри него — вне куба они выключены и не мешают другим квестам SkRob.
 -- Прогресс: вехи regression_3d / regression_2d / regression_lore → RemoteEvent ReplicatedStorage.Remotes.RegressionProgress.
 -- В Studio: _G.RegressionDebug.goto("2D.4") — перейти к шагу (для проверки экранов без прохождения).
 
@@ -16,6 +18,7 @@ local Regression = ReplicatedStorage:WaitForChild("Regression")
 local MathCore = require(Regression.MathCore)
 local Datasets = require(Regression.Data.Datasets)
 local Config = require(Regression.Core.Config)
+local Layout = require(Regression.Core.LevelLayout)
 local Store = require(Regression.Core.Store)
 local LineModel = require(Regression.Core.LineModel)
 local Hud = require(Regression.UI.Hud)
@@ -26,6 +29,7 @@ local Scoreboard = require(Regression.World.Scoreboard)
 local NextBoard = require(Regression.World.NextBoard)
 local LoreWorld = require(Regression.World.LoreWorld)
 local LineControls = require(Regression.Input.LineControls)
+local PlayerControls = require(Regression.Input.PlayerControls)
 local Flow3D = require(Regression.Scenes.Flow3D)
 local SceneMachine = require(Regression.Scenes.SceneMachine)
 local Screens = Regression.Scenes.Screens2D
@@ -80,6 +84,19 @@ end
 local origin = findOrigin("FlowerbedAnchor", 30)
 local loreOrigin = findOrigin("LoreAnchor", 60)
 
+-- Куб уровня: деталь из мира (её можно растянуть в Studio), иначе — числа из LevelLayout
+local zonePart = level and level:WaitForChild("RegressionZone", 3)
+local zoneCF, zoneSize = CFrame.new(Layout.zone.center), Layout.zone.size
+if zonePart and zonePart:IsA("BasePart") then
+	zoneCF, zoneSize = zonePart.CFrame, zonePart.Size
+	zonePart.Transparency = 1
+	zonePart.CanCollide, zonePart.CanQuery, zonePart.CanTouch = false, false, false
+end
+local function insideCube(p: Vector3): boolean
+	local l = zoneCF:PointToObjectSpace(p)
+	return math.abs(l.X) <= zoneSize.X / 2 and math.abs(l.Y) <= zoneSize.Y / 2 and math.abs(l.Z) <= zoneSize.Z / 2
+end
+
 -- ───── 2. Состояние и модель ─────
 
 local store = Store.new({
@@ -101,6 +118,7 @@ local store = Store.new({
 	opened2D = false,
 	highlight = nil,
 	notes = {},
+	inQuestCube = false,
 })
 local lineModel = LineModel.new(MathCore, fb)
 
@@ -157,6 +175,41 @@ local controls = LineControls.new({
 	end,
 })
 
+-- ───── 3a. Куб: вне него подсказки модуля недоступны ─────
+-- Enabled подсказок ведут сцены, поэтому не трогаем его: вне куба MaxActivationDistance = 0 (исходное — в атрибуте).
+local inCube = false
+local function gatePrompt(p: ProximityPrompt)
+	if inCube then
+		return
+	end
+	if p:GetAttribute("RegDist") == nil then
+		p:SetAttribute("RegDist", p.MaxActivationDistance)
+		p.MaxActivationDistance = 0
+	end
+end
+local function setCube(on: boolean)
+	inCube = on
+	for _, d in worldFolder:GetDescendants() do
+		if d:IsA("ProximityPrompt") then
+			if on then
+				local dist = d:GetAttribute("RegDist")
+				if dist ~= nil then
+					d.MaxActivationDistance = dist
+					d:SetAttribute("RegDist", nil)
+				end
+			else
+				gatePrompt(d)
+			end
+		end
+	end
+	store:set("inQuestCube", on)
+end
+worldFolder.DescendantAdded:Connect(function(d)
+	if d:IsA("ProximityPrompt") then
+		gatePrompt(d) -- например, подсказка второго табло, которое поднимается позже
+	end
+end)
+
 -- ───── 4. Сцены: 3D (Flow3D) → экраны 2D и лор (SceneMachine) ─────
 
 local scenes = { require(Screens.S2D_1_DerivativeM) }
@@ -212,6 +265,7 @@ bed:bindCards(function()
 	dirtyWorld = true
 end)
 
+setCube(false) -- до первой проверки положения игрока всё закрыто
 flow:start()
 
 local uiAcc = 0
@@ -221,12 +275,24 @@ RunService.RenderStepped:Connect(function(dt)
 	local char = player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if root then
-		store:set("inZone", bed:distanceTo(root.Position) <= Config.ZONE_STUDS)
-		-- HUD модуля — только рядом с клумбой/пасекой или во время заданий модуля
+		local cube = insideCube(root.Position)
+		if cube ~= inCube then
+			setCube(cube)
+			if not cube then
+				-- вышли из куба: закрыть экран 2D и режим управления прямой
+				controls:exit()
+				if shell.isOpen then
+					shell:close()
+					PlayerControls.release("shell")
+				end
+			end
+		end
+		store:set("inZone", cube and bed:distanceTo(root.Position) <= Config.ZONE_STUDS)
+		-- HUD модуля — только внутри куба: рядом с клумбой/пасекой или во время заданий модуля
 		local id = machine:sceneId()
 		local loreWorldStep = id ~= nil and id:sub(1, 1) == "L" and not shell.isOpen
-		hud:setVisible(controls.active or loreWorldStep or bed:distanceTo(root.Position) <= Config.HUD_RADIUS_BED
-			or lore:distanceTo(root.Position) <= Config.HUD_RADIUS_LORE)
+		hud:setVisible(cube and (controls.active or loreWorldStep or bed:distanceTo(root.Position) <= Config.HUD_RADIUS_BED
+			or lore:distanceTo(root.Position) <= Config.HUD_RADIUS_LORE))
 	end
 
 	local now = os.clock()
@@ -258,6 +324,7 @@ end)
 if RunService:IsStudio() then
 	_G.RegressionDebug = {
 		store = store, flow = flow, machine = machine, shell = shell, lore = lore, bed = bed,
+		inCube = function() return inCube end,
 		-- перейти к шагу: "3D.4", "2D.5", "L.3" …
 		goto = function(id: string)
 			if id:sub(1, 2) == "3D" then

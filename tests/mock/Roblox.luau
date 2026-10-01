@@ -1188,6 +1188,7 @@ end
 function M.trigger(prompt)
 	assert(prompt and prompt:IsA("ProximityPrompt"), "trigger: не ProximityPrompt")
 	assert(prompt.Enabled, "trigger: промпт выключен — " .. prompt:GetFullName())
+	assert(prompt.MaxActivationDistance > 0, "trigger: подсказка недоступна (MaxActivationDistance = 0) — " .. prompt:GetFullName())
 	prompt.Triggered:Fire(localPlayer)
 	M.step(1 / 60)
 end

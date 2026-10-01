@@ -11,5 +11,11 @@
 <Vector3 name="size"><X>40</X><Y>1</Y><Z>44</Z></Vector3>
 <CoordinateFrame name="CFrame"><X>5.0</X><Y>-30.0758</Y><Z>62.0</Z><R00>-0.999504</R00><R01>0.000000</R01><R02>-0.031493</R02><R10>0.000000</R10><R11>1.000000</R11><R12>0.000000</R12><R20>0.031493</R20><R21>0.000000</R21><R22>-0.999504</R22></CoordinateFrame>
 <Color3uint8 name="Color3uint8">4285185881</Color3uint8><float name="Transparency">0.7</float>
+</Properties></Item><Item class="Part" referent="RBX9"><Properties>
+<string name="Name">RegressionZone</string><bool name="Anchored">true</bool><bool name="CanCollide">false</bool>
+<bool name="CanQuery">false</bool><bool name="CanTouch">false</bool><bool name="CastShadow">false</bool><bool name="Locked">true</bool>
+<Vector3 name="size"><X>123.0</X><Y>78.0</Y><Z>148.0</Z></Vector3>
+<CoordinateFrame name="CFrame"><X>34.5</X><Y>6.0</Y><Z>20.0</Z><R00>1.000000</R00><R01>0.000000</R01><R02>-0.000000</R02><R10>0.000000</R10><R11>1.000000</R11><R12>0.000000</R12><R20>0.000000</R20><R21>0.000000</R21><R22>1.000000</R22></CoordinateFrame>
+<Color3uint8 name="Color3uint8">4283872489</Color3uint8><float name="Transparency">0.92</float>
 </Properties></Item>
 </Item></roblox>

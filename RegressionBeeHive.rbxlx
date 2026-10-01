@@ -129,26 +129,68 @@
           <float name="Transparency">0.7</float>
         </Properties>
       </Item>
+      <Item class="Part" referent="6">
+        <Properties>
+          <string name="Name">RegressionZone</string>
+          <bool name="Anchored">true</bool>
+          <CoordinateFrame name="CFrame">
+            <X>34.5</X>
+            <Y>6</Y>
+            <Z>20</Z>
+            <R00>1</R00>
+            <R01>0</R01>
+            <R02>-0</R02>
+            <R10>0</R10>
+            <R11>1</R11>
+            <R12>0</R12>
+            <R20>0</R20>
+            <R21>0</R21>
+            <R22>1</R22>
+          </CoordinateFrame>
+          <bool name="CanCollide">false</bool>
+          <bool name="CanQuery">false</bool>
+          <bool name="CanTouch">false</bool>
+          <bool name="CastShadow">false</bool>
+          <Color3uint8 name="Color3uint8">5682409</Color3uint8>
+          <bool name="Locked">true</bool>
+          <Vector3 name="size">
+            <X>123</X>
+            <Y>78</Y>
+            <Z>148</Z>
+          </Vector3>
+          <float name="Transparency">0.92</float>
+        </Properties>
+      </Item>
     </Item>
   </Item>
-  <Item class="Lighting" referent="6">
+  <Item class="Lighting" referent="7">
     <Properties>
       <string name="Name">Lighting</string>
     </Properties>
   </Item>
-  <Item class="ReplicatedStorage" referent="7">
+  <Item class="ReplicatedStorage" referent="8">
     <Properties>
       <string name="Name">ReplicatedStorage</string>
     </Properties>
-    <Item class="Folder" referent="8">
+    <Item class="Folder" referent="9">
+      <Properties>
+        <string name="Name">Remotes</string>
+      </Properties>
+      <Item class="RemoteEvent" referent="10">
+        <Properties>
+          <string name="Name">RegressionProgress</string>
+        </Properties>
+      </Item>
+    </Item>
+    <Item class="Folder" referent="11">
       <Properties>
         <string name="Name">Regression</string>
       </Properties>
-      <Item class="Folder" referent="9">
+      <Item class="Folder" referent="12">
         <Properties>
           <string name="Name">Core</string>
         </Properties>
-        <Item class="ModuleScript" referent="10">
+        <Item class="ModuleScript" referent="13">
           <Properties>
             <string name="Name">BedGeometry</string>
             <string name="Source"><![CDATA[--!strict
@@ -231,7 +273,7 @@ return BedGeometry
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="11">
+        <Item class="ModuleScript" referent="14">
           <Properties>
             <string name="Name">Config</string>
             <string name="Source"><![CDATA[--!strict
@@ -276,7 +318,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="12">
+        <Item class="ModuleScript" referent="15">
           <Properties>
             <string name="Name">Format</string>
             <string name="Source"><![CDATA[--!strict
@@ -346,7 +388,24 @@ return Format
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="13">
+        <Item class="ModuleScript" referent="16">
+          <Properties>
+            <string name="Name">LevelLayout</string>
+            <string name="Source"><![CDATA[-- Сгенерировано tools/level.py. Не редактировать.
+-- Площадки модуля «Регрессия» в мире SkRob и куб уровня (RegressionZone).
+return {
+	groundY = -30.5758,
+	spawn = Vector3.new(3.1, -30.5758, 1.7),
+	anchors = {
+		{ name = "FlowerbedAnchor", x = 62.0, z = -28.0, size = Vector3.new(20, 1, 12) },
+		{ name = "LoreAnchor", x = 5.0, z = 62.0, size = Vector3.new(40, 1, 44) },
+	},
+	zone = { center = Vector3.new(34.5, 6.0, 20.0), size = Vector3.new(123.0, 78.0, 148.0) },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">LineModel</string>
             <string name="Source"><![CDATA[--!strict
@@ -395,7 +454,7 @@ return LineModel
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="14">
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">Records</string>
             <string name="Source"><![CDATA[--!strict
@@ -480,7 +539,7 @@ return Records
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="15">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">Store</string>
             <string name="Source"><![CDATA[--!strict
@@ -560,11 +619,11 @@ return Store
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="16">
+      <Item class="Folder" referent="20">
         <Properties>
           <string name="Name">Data</string>
         </Properties>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">Datasets</string>
             <string name="Source"><![CDATA[-- Сгенерировано scripts/json_to_luau.py из assets/datasets.json. Не редактировать вручную.
@@ -779,7 +838,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">ExpectedValues</string>
             <string name="Source"><![CDATA[-- Сгенерировано scripts/json_to_luau.py из assets/expected_values.json. Не редактировать вручную.
@@ -1014,11 +1073,11 @@ return {
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="19">
+      <Item class="Folder" referent="23">
         <Properties>
           <string name="Name">Input</string>
         </Properties>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="24">
           <Properties>
             <string name="Name">LineControls</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -1224,7 +1283,7 @@ return LineControls
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="25">
           <Properties>
             <string name="Name">PlayerControls</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -1279,7 +1338,7 @@ return PlayerControls
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="22">
+      <Item class="ModuleScript" referent="26">
         <Properties>
           <string name="Name">MathCore</string>
           <string name="Source"><![CDATA[--!nonstrict
@@ -1655,11 +1714,11 @@ return MathCore
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="23">
+      <Item class="Folder" referent="27">
         <Properties>
           <string name="Name">Scenes</string>
         </Properties>
-        <Item class="ModuleScript" referent="24">
+        <Item class="ModuleScript" referent="28">
           <Properties>
             <string name="Name">Flow3D</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -2195,11 +2254,11 @@ return Flow3D
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="25">
+        <Item class="Folder" referent="29">
           <Properties>
             <string name="Name">Lore</string>
           </Properties>
-          <Item class="ModuleScript" referent="26">
+          <Item class="ModuleScript" referent="30">
             <Properties>
               <string name="Name">LoreScenes</string>
               <string name="Source"><![CDATA[--!nonstrict
@@ -2696,7 +2755,7 @@ return { L0, L1, L2, L3, L4, L5 }
             </Properties>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="27">
+        <Item class="ModuleScript" referent="31">
           <Properties>
             <string name="Name">SceneMachine</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -3091,11 +3150,11 @@ return SceneMachine
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="28">
+        <Item class="Folder" referent="32">
           <Properties>
             <string name="Name">Screens2D</string>
           </Properties>
-          <Item class="ModuleScript" referent="29">
+          <Item class="ModuleScript" referent="33">
             <Properties>
               <string name="Name">S2D_1_DerivativeM</string>
               <string name="Source"><![CDATA[--!nonstrict
@@ -3436,7 +3495,7 @@ return scene
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="30">
+          <Item class="ModuleScript" referent="34">
             <Properties>
               <string name="Name">S2D_23_Intercept</string>
               <string name="Source"><![CDATA[--!nonstrict
@@ -3888,7 +3947,7 @@ return { scene2, scene3 }
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="31">
+          <Item class="ModuleScript" referent="35">
             <Properties>
               <string name="Name">S2D_4_SmallSample</string>
               <string name="Source"><![CDATA[--!nonstrict
@@ -4233,7 +4292,7 @@ return scene
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="32">
+          <Item class="ModuleScript" referent="36">
             <Properties>
               <string name="Name">S2D_5_RidgeLasso</string>
               <string name="Source"><![CDATA[--!nonstrict
@@ -4502,7 +4561,7 @@ return scene
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="33">
+          <Item class="ModuleScript" referent="37">
             <Properties>
               <string name="Name">S2D_6_PenaltyCurves</string>
               <string name="Source"><![CDATA[--!nonstrict
@@ -4749,7 +4808,7 @@ return scene
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="34">
+          <Item class="ModuleScript" referent="38">
             <Properties>
               <string name="Name">S2D_7_R2</string>
               <string name="Source"><![CDATA[--!nonstrict
@@ -4874,11 +4933,11 @@ return scene
           </Item>
         </Item>
       </Item>
-      <Item class="Folder" referent="35">
+      <Item class="Folder" referent="39">
         <Properties>
           <string name="Name">Tests</string>
         </Properties>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">LogicSpec</string>
             <string name="Source"><![CDATA[-- Автотест логики 3D experience: Format, BedGeometry, Records, LineModel, Store.
@@ -5013,7 +5072,7 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">MathCoreSpec</string>
             <string name="Source"><![CDATA[-- Автотест MathCore против эталона scripts/export_expected.py (110 проверок).
@@ -5181,11 +5240,11 @@ end
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="38">
+      <Item class="Folder" referent="42">
         <Properties>
           <string name="Name">UI</string>
         </Properties>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">Drag</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -5254,7 +5313,7 @@ return Drag
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">FormulaView</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -5677,7 +5736,7 @@ return FormulaView
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">Gui</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -5813,7 +5872,7 @@ return Gui
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="46">
           <Properties>
             <string name="Name">Hud</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -6119,7 +6178,7 @@ return Hud
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">Notebook</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -6221,7 +6280,7 @@ return Notebook
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">PlotView2D</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -6608,7 +6667,7 @@ return PlotView2D
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">R2View</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -6964,7 +7023,7 @@ return R2View
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="50">
           <Properties>
             <string name="Name">Shell2D</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -7375,7 +7434,7 @@ return Shell2D
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="51">
           <Properties>
             <string name="Name">Slider</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -7477,7 +7536,7 @@ return Slider
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="48">
+        <Item class="ModuleScript" referent="52">
           <Properties>
             <string name="Name">Strings</string>
             <string name="Source"><![CDATA[--!strict
@@ -7877,7 +7936,7 @@ return {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="49">
+        <Item class="ModuleScript" referent="53">
           <Properties>
             <string name="Name">Theme</string>
             <string name="Source"><![CDATA[--!strict
@@ -7956,7 +8015,7 @@ return Theme
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="50">
+        <Item class="ModuleScript" referent="54">
           <Properties>
             <string name="Name">Viewport3D</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -8122,11 +8181,11 @@ return Viewport3D
           </Properties>
         </Item>
       </Item>
-      <Item class="Folder" referent="51">
+      <Item class="Folder" referent="55">
         <Properties>
           <string name="Name">World</string>
         </Properties>
-        <Item class="ModuleScript" referent="52">
+        <Item class="ModuleScript" referent="56">
           <Properties>
             <string name="Name">Flowerbed</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -8508,7 +8567,7 @@ return Flowerbed
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="53">
+        <Item class="ModuleScript" referent="57">
           <Properties>
             <string name="Name">LoreWorld</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -8702,7 +8761,7 @@ return LoreWorld
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="54">
+        <Item class="ModuleScript" referent="58">
           <Properties>
             <string name="Name">NextBoard</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -8816,7 +8875,7 @@ return NextBoard
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="55">
+        <Item class="ModuleScript" referent="59">
           <Properties>
             <string name="Name">Scoreboard</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -9024,22 +9083,12 @@ return Scoreboard
         </Item>
       </Item>
     </Item>
-    <Item class="Folder" referent="56">
-      <Properties>
-        <string name="Name">Remotes</string>
-      </Properties>
-      <Item class="RemoteEvent" referent="57">
-        <Properties>
-          <string name="Name">RegressionProgress</string>
-        </Properties>
-      </Item>
-    </Item>
   </Item>
-  <Item class="ServerScriptService" referent="58">
+  <Item class="ServerScriptService" referent="60">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="59">
+    <Item class="Script" referent="61">
       <Properties>
         <string name="Name">RegressionTests</string>
         <bool name="Disabled">false</bool>
@@ -9076,11 +9125,11 @@ end
 ]]></string>
       </Properties>
     </Item>
-    <Item class="Folder" referent="60">
+    <Item class="Folder" referent="62">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Script" referent="61">
+      <Item class="Script" referent="63">
         <Properties>
           <string name="Name">RegressionProgress</string>
           <string name="Source"><![CDATA[-- RegressionProgress: вехи модуля «Регрессия» от клиента → LearningService (как у других уроков SkRob).
@@ -9116,15 +9165,15 @@ end)
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="62">
+  <Item class="StarterPlayer" referent="64">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="63">
+    <Item class="StarterPlayerScripts" referent="65">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="64">
+      <Item class="LocalScript" referent="66">
         <Properties>
           <string name="Name">RegressionClient</string>
           <bool name="Disabled">false</bool>
@@ -9135,6 +9184,8 @@ end)
 --   (низ детали — земля; локальная +Z детали смотрит туда, откуда приходит игрок). Высота уточняется лучом вниз;
 --   если земля ещё не подгрузилась (StreamingEnabled), остаётся низ якоря.
 -- Без якорей клумба ставится в 30 studs перед SpawnLocation, пасека — в 60 studs.
+-- Куб уровня Workspace/RegressionLevel/RegressionZone: кнопки квестов модуля (подсказки F, HUD, пульт) работают
+--   только внутри него — вне куба они выключены и не мешают другим квестам SkRob.
 -- Прогресс: вехи regression_3d / regression_2d / regression_lore → RemoteEvent ReplicatedStorage.Remotes.RegressionProgress.
 -- В Studio: _G.RegressionDebug.goto("2D.4") — перейти к шагу (для проверки экранов без прохождения).
 
@@ -9146,6 +9197,7 @@ local Regression = ReplicatedStorage:WaitForChild("Regression")
 local MathCore = require(Regression.MathCore)
 local Datasets = require(Regression.Data.Datasets)
 local Config = require(Regression.Core.Config)
+local Layout = require(Regression.Core.LevelLayout)
 local Store = require(Regression.Core.Store)
 local LineModel = require(Regression.Core.LineModel)
 local Hud = require(Regression.UI.Hud)
@@ -9156,6 +9208,7 @@ local Scoreboard = require(Regression.World.Scoreboard)
 local NextBoard = require(Regression.World.NextBoard)
 local LoreWorld = require(Regression.World.LoreWorld)
 local LineControls = require(Regression.Input.LineControls)
+local PlayerControls = require(Regression.Input.PlayerControls)
 local Flow3D = require(Regression.Scenes.Flow3D)
 local SceneMachine = require(Regression.Scenes.SceneMachine)
 local Screens = Regression.Scenes.Screens2D
@@ -9210,6 +9263,19 @@ end
 local origin = findOrigin("FlowerbedAnchor", 30)
 local loreOrigin = findOrigin("LoreAnchor", 60)
 
+-- Куб уровня: деталь из мира (её можно растянуть в Studio), иначе — числа из LevelLayout
+local zonePart = level and level:WaitForChild("RegressionZone", 3)
+local zoneCF, zoneSize = CFrame.new(Layout.zone.center), Layout.zone.size
+if zonePart and zonePart:IsA("BasePart") then
+	zoneCF, zoneSize = zonePart.CFrame, zonePart.Size
+	zonePart.Transparency = 1
+	zonePart.CanCollide, zonePart.CanQuery, zonePart.CanTouch = false, false, false
+end
+local function insideCube(p: Vector3): boolean
+	local l = zoneCF:PointToObjectSpace(p)
+	return math.abs(l.X) <= zoneSize.X / 2 and math.abs(l.Y) <= zoneSize.Y / 2 and math.abs(l.Z) <= zoneSize.Z / 2
+end
+
 -- ───── 2. Состояние и модель ─────
 
 local store = Store.new({
@@ -9231,6 +9297,7 @@ local store = Store.new({
 	opened2D = false,
 	highlight = nil,
 	notes = {},
+	inQuestCube = false,
 })
 local lineModel = LineModel.new(MathCore, fb)
 
@@ -9287,6 +9354,41 @@ local controls = LineControls.new({
 	end,
 })
 
+-- ───── 3a. Куб: вне него подсказки модуля недоступны ─────
+-- Enabled подсказок ведут сцены, поэтому не трогаем его: вне куба MaxActivationDistance = 0 (исходное — в атрибуте).
+local inCube = false
+local function gatePrompt(p: ProximityPrompt)
+	if inCube then
+		return
+	end
+	if p:GetAttribute("RegDist") == nil then
+		p:SetAttribute("RegDist", p.MaxActivationDistance)
+		p.MaxActivationDistance = 0
+	end
+end
+local function setCube(on: boolean)
+	inCube = on
+	for _, d in worldFolder:GetDescendants() do
+		if d:IsA("ProximityPrompt") then
+			if on then
+				local dist = d:GetAttribute("RegDist")
+				if dist ~= nil then
+					d.MaxActivationDistance = dist
+					d:SetAttribute("RegDist", nil)
+				end
+			else
+				gatePrompt(d)
+			end
+		end
+	end
+	store:set("inQuestCube", on)
+end
+worldFolder.DescendantAdded:Connect(function(d)
+	if d:IsA("ProximityPrompt") then
+		gatePrompt(d) -- например, подсказка второго табло, которое поднимается позже
+	end
+end)
+
 -- ───── 4. Сцены: 3D (Flow3D) → экраны 2D и лор (SceneMachine) ─────
 
 local scenes = { require(Screens.S2D_1_DerivativeM) }
@@ -9342,6 +9444,7 @@ bed:bindCards(function()
 	dirtyWorld = true
 end)
 
+setCube(false) -- до первой проверки положения игрока всё закрыто
 flow:start()
 
 local uiAcc = 0
@@ -9351,12 +9454,24 @@ RunService.RenderStepped:Connect(function(dt)
 	local char = player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if root then
-		store:set("inZone", bed:distanceTo(root.Position) <= Config.ZONE_STUDS)
-		-- HUD модуля — только рядом с клумбой/пасекой или во время заданий модуля
+		local cube = insideCube(root.Position)
+		if cube ~= inCube then
+			setCube(cube)
+			if not cube then
+				-- вышли из куба: закрыть экран 2D и режим управления прямой
+				controls:exit()
+				if shell.isOpen then
+					shell:close()
+					PlayerControls.release("shell")
+				end
+			end
+		end
+		store:set("inZone", cube and bed:distanceTo(root.Position) <= Config.ZONE_STUDS)
+		-- HUD модуля — только внутри куба: рядом с клумбой/пасекой или во время заданий модуля
 		local id = machine:sceneId()
 		local loreWorldStep = id ~= nil and id:sub(1, 1) == "L" and not shell.isOpen
-		hud:setVisible(controls.active or loreWorldStep or bed:distanceTo(root.Position) <= Config.HUD_RADIUS_BED
-			or lore:distanceTo(root.Position) <= Config.HUD_RADIUS_LORE)
+		hud:setVisible(cube and (controls.active or loreWorldStep or bed:distanceTo(root.Position) <= Config.HUD_RADIUS_BED
+			or lore:distanceTo(root.Position) <= Config.HUD_RADIUS_LORE))
 	end
 
 	local now = os.clock()
@@ -9388,6 +9503,7 @@ end)
 if RunService:IsStudio() then
 	_G.RegressionDebug = {
 		store = store, flow = flow, machine = machine, shell = shell, lore = lore, bed = bed,
+		inCube = function() return inCube end,
 		-- перейти к шагу: "3D.4", "2D.5", "L.3" …
 		goto = function(id: string)
 			if id:sub(1, 2) == "3D" then
