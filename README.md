@@ -9,6 +9,7 @@
 2. В Output: `Regression ИТОГО: 222/222` (автотесты ядра, только в Studio).
 3. Клумба — в ≈ 66 studs от спауна (x ≈ 62, z ≈ −28; площадка `Workspace/RegressionLevel/FlowerbedAnchor`),
    пасека лор-задачи — в ≈ 60 studs по другую сторону (x ≈ 5, z ≈ 62; `…/LoreAnchor`). HUD модуля появляется только рядом с ними.
+   Всё это накрыто **кубом уровня** `Workspace/RegressionLevel/RegressionZone` — кнопки квестов модуля работают только внутри него (см. ниже).
 4. Отладка в Studio (командная строка, клиент): `_G.RegressionDebug.goto("2D.4")` — сразу к нужному шагу
    (`"3D.1"`…`"3D.6"`, `"2D.1"`…`"2D.7"`, `"L.0"`…`"L.5"`).
 
@@ -33,12 +34,25 @@
 | L.3–L.4 | у 5 ульев: пчёлы, поляна (расстояние), «Внести»; потом «Собрать мёд» | прогнозы 24,79 … 37,20 кг |
 | L.5 | R² своих ульев, «А если бы OLS?» | R² = 0,989; OLS: −0,78; веха `regression_lore` |
 
+## Куб уровня (RegressionZone)
+Прозрачный параллелепипед 123 × 78 × 148 studs (центр 34,5; 6; 20) накрывает клумбу, оба табло и пасеку с запасом 12 studs.
+Снаружи он не мешает другим квестам SkRob:
+- подсказки F модуля (цветки, пульт, второе табло, пасечник, ульи, поляны) недоступны — у них `MaxActivationDistance = 0`
+  (исходное значение хранится в атрибуте `RegDist` и возвращается при входе; `Enabled` не трогаем — им управляют сцены);
+- HUD модуля (баннер шага, «?», мёд, кнопки действий, пульт управления прямой) скрыт;
+- при выходе из куба закрываются экран 2D и режим управления прямой. Прогресс сохраняется: вернулся в куб — продолжил.
+
+Размер можно менять прямо в Studio (клиент берёт деталь `RegressionZone`; если её нет в месте — числа из `Core/LevelLayout`).
+Границы куба: слева не доходят до улья Data Console (x ≤ −28,7), справа далеко от `TreeLevelZone` (x ≥ 164). Спаун внутри куба.
+В кубе остаются чужие `Interactables` (TestEntity, CapabilityTerminal) — модуль на них не влияет.
+Куб задаётся в `tools/level.py` (`ZONE`); тест сверяет, что весь мир модуля внутри него и что чужие квесты снаружи.
+
 ## Что добавлено в SkRob (чужие объекты не изменены)
 ```
-Workspace/RegressionLevel/                 Folder: FlowerbedAnchor, LoreAnchor — площадки модуля (в игре скрыты)
+Workspace/RegressionLevel/                 Folder: FlowerbedAnchor, LoreAnchor — площадки модуля; RegressionZone — куб уровня (в игре скрыты)
 ReplicatedStorage/Regression/              весь код модуля (ModuleScript)
   MathCore · Data/{Datasets, ExpectedValues}
-  Core/    Config, Format, Store, LineModel, Records, BedGeometry       — логика без Roblox API
+  Core/    Config, Format, Store, LineModel, Records, BedGeometry, LevelLayout   — логика без Roblox API
   UI/      Theme, Strings, Gui, Hud, PlotView2D, FormulaView, Notebook, Shell2D, Slider, Drag, Viewport3D, R2View
   World/   Flowerbed, Scoreboard, NextBoard, LoreWorld
   Input/   LineControls, PlayerControls
@@ -66,7 +80,7 @@ StarterPlayer/StarterPlayerScripts/RegressionClient   LocalScript: точка в
 ## Проверка вне Studio
 ```
 luau tests/run.luau                                  # 222/222 — MathCore (160) + логика 3D (62)
-python3 tests/bundle.py && luau tests/scenario.luau  # 142/142 — сквозной путь игрока 3D → 2D → лор на моке Roblox
+python3 tests/bundle.py && luau tests/scenario.luau  # 156/156 — сквозной путь игрока 3D → 2D → лор на моке Roblox, плюс куб уровня
 ```
 Мок (`tests/mock/Roblox.luau`) проверяет имена и типы свойств и Enum по reflection-базе rbx-dom, время в нём виртуальное.
 Он не рисует интерфейс, поэтому вёрстку (раскладка формул, глифы Σ λ ⇒ ˆ в BuilderSans, телефон) смотри в Studio.
@@ -89,7 +103,7 @@ python3 tests/bundle.py && luau tests/scenario.luau  # 142/142 — сквозн�
 | Лор, расстояние | сюжетная величина на табличке поляны; путь в мире пропорционален (0,012 studs/м + 4 studs) |
 | Лор, «до пасеки» | расстояние от улья до ближайшей поляны (признак модели) |
 | Лор, NPC | пасечник выдаёт задание (L.0) и возвращает к закрытому экрану; после первого улья — пчела-помощник считает пчёл, до полян игрок ходит сам |
-| Встраивание | площадки на свободной земле у спауна SkRob; HUD модуля только рядом с ними; вехи — в LearningService |
+| Встраивание | площадки на свободной земле у спауна SkRob; куб уровня: подсказки и HUD модуля только внутри; вехи — в LearningService |
 
 ## Открытые вопросы
 - Сохранение прогресса между сессиями (DataStore) — вне рамок; состояние готово к сериализации (`Store.serialize`).
