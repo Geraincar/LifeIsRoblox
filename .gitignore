@@ -1,0 +1,3 @@
+tools/rbxtool/target/
+tests/_bundle.luau
+__pycache__/
