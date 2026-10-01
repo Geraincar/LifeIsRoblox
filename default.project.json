@@ -1,0 +1,33 @@
+{
+  "name": "SkRob-Regression",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$ignoreUnknownInstances": true,
+      "Regression": { "$path": "src/ReplicatedStorage/Regression" },
+      "Remotes": {
+        "$ignoreUnknownInstances": true,
+        "RegressionProgress": { "$path": "src/ReplicatedStorage/Remotes/RegressionProgress.rbxmx" }
+      }
+    },
+    "ServerScriptService": {
+      "$ignoreUnknownInstances": true,
+      "RegressionTests": { "$path": "src/ServerScriptService/RegressionTests.server.luau" },
+      "Server": {
+        "$ignoreUnknownInstances": true,
+        "RegressionProgress": { "$path": "src/ServerScriptService/Server/RegressionProgress.server.luau" }
+      }
+    },
+    "StarterPlayer": {
+      "$ignoreUnknownInstances": true,
+      "StarterPlayerScripts": {
+        "$ignoreUnknownInstances": true,
+        "RegressionClient": { "$path": "src/StarterPlayer/StarterPlayerScripts/RegressionClient.client.luau" }
+      }
+    },
+    "Workspace": {
+      "$ignoreUnknownInstances": true,
+      "RegressionLevel": { "$path": "src/Workspace/RegressionLevel.rbxmx" }
+    }
+  }
+}
