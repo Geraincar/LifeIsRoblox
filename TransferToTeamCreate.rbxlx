@@ -9094,12 +9094,473 @@ return Scoreboard
         </Item>
       </Item>
     </Item>
+    <Item class="ModuleScript" referent="58">
+      <Properties>
+        <string name="Name">DecisionTreeLabMath</string>
+        <string name="Source"><![CDATA[local M={}
+M.Features={
+    {Id="water_pct",Name="Вода",Min=20,Max=55,Step=0.1,Decimals=2},
+    {Id="sugar_pct",Name="Сахар",Min=35,Max=80,Step=0.1,Decimals=2},
+    {Id="acidity",Name="Кислотность",Min=2.5,Max=5.5,Step=0.01,Decimals=3},
+    {Id="viscosity",Name="Вязкость",Min=0.2,Max=0.9,Step=0.01,Decimals=3},
+    {Id="temperature",Name="Температура",Min=20,Max=36,Step=0.1,Decimals=2},
+    {Id="aroma",Name="Аромат",Min=0,Max=1,Step=0.01,Decimals=3},
+    {Id="color",Name="Цвет",Min=0,Max=1,Step=0.01,Decimals=3},
+    {Id="pollen_density",Name="Пыльца",Min=0,Max=1,Step=0.01,Decimals=3},
+}
+M.Labels={"A","B","C","D"}
+local scales={100,100,1000,1000,100,1000,1000,1000}
+local alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local valueByByte={}
+for i=1,#alphabet do valueByByte[string.byte(alphabet,i)]=i-1 end
+
+function M.DecodeDataset(encoded,expected)
+    local bytes={}
+    local accumulator,bitCount=0,0
+    for i=1,#encoded do
+        local value=valueByByte[string.byte(encoded,i)]
+        if value then
+            accumulator=accumulator*64+value
+            bitCount=bitCount+6
+            if bitCount>=8 then
+                bitCount=bitCount-8
+                local divisor=2^bitCount
+                bytes[#bytes+1]=math.floor(accumulator/divisor)
+                accumulator=accumulator%divisor
+            end
+        end
+    end
+    assert(#bytes==expected*17,"Dataset byte count mismatch")
+    local data={train={},validation={},test={}}
+    local splits={"train","validation","test"}
+    local cursor=1
+    for i=1,expected do
+        local features={}
+        for f=1,8 do
+            local high,low=bytes[cursor],bytes[cursor+1]
+            features[f]=(high*256+low)/scales[f]
+            cursor=cursor+2
+        end
+        local code=bytes[cursor]
+        cursor=cursor+1
+        local label=code%4+1
+        local split=splits[math.floor(code/4)+1]
+        assert(split and label>=1 and label<=4,"Dataset class or split invalid")
+        local row={f=features,y=label,id=string.format("B%05d",i)}
+        table.insert(data[split],row)
+    end
+    return data
+end
+
+local function isInteger(n,low,high)
+    return type(n)=="number" and n%1==0 and n>=low and n<=high
+end
+local function matches(value,op,threshold)
+    if op==">" then return value>threshold end
+    if op==">=" then return value>=threshold end
+    if op=="<" then return value<threshold end
+    return value<=threshold
+end
+function M.ValidateGraph(graph)
+    assert(type(graph)=="table" and type(graph.nodes)=="table" and isInteger(graph.root,1,100000),"Invalid tree")
+    local nodes=graph.nodes
+    local visited={}
+    local count=0
+    local function visit(id,depth)
+        assert(isInteger(id,1,100000) and depth<=32 and not visited[id],"Tree is too deep or cyclic")
+        local node=nodes[tostring(id)]
+        assert(type(node)=="table","Missing tree node")
+        visited[id]=true
+        count=count+1
+        assert(count<=255,"Tree has more than 255 nodes")
+        if node.kind=="leaf" then
+            assert(isInteger(node.class,1,4),"Invalid leaf processor")
+        elseif node.kind=="split" then
+            assert(isInteger(node.feature,1,8),"Invalid split feature")
+            assert(node.op==">" or node.op==">=" or node.op=="<" or node.op=="<=","Invalid split operator")
+            local meta=M.Features[node.feature]
+            assert(type(node.threshold)=="number" and node.threshold==node.threshold and node.threshold>=meta.Min and node.threshold<=meta.Max,"Invalid split threshold")
+            visit(node.yes,depth+1)
+            visit(node.no,depth+1)
+        else error("Unknown tree node kind") end
+    end
+    visit(graph.root,1)
+    local supplied=0
+    for _ in pairs(nodes) do supplied=supplied+1 end
+    assert(supplied==count,"Orphan tree nodes are not allowed")
+    return graph
+end
+function M.PredictGraph(row,graph)
+    local id=graph.root
+    while true do
+        local node=graph.nodes[tostring(id)]
+        if node.kind=="leaf" then return node.class end
+        id=matches(row.f[node.feature],node.op,node.threshold) and node.yes or node.no
+    end
+end
+function M.Metrics(rows,predict)
+    assert(#rows>0,"Empty evaluation split")
+    local tp,fp,fn={0,0,0,0},{0,0,0,0},{0,0,0,0}
+    local correct=0
+    for _,row in ipairs(rows) do
+        local guessed=predict(row)
+        assert(isInteger(guessed,1,4),"Model returned invalid class")
+        if guessed==row.y then
+            correct=correct+1
+            tp[guessed]=tp[guessed]+1
+        else
+            fp[guessed]=fp[guessed]+1
+            fn[row.y]=fn[row.y]+1
+        end
+    end
+    local byClass,macro={},0
+    for c=1,4 do
+        local denominator=2*tp[c]+fp[c]+fn[c]
+        local f1=denominator>0 and 2*tp[c]/denominator or 0
+        byClass[c]=f1
+        macro=macro+f1/4
+    end
+    return {Accuracy=correct/#rows,MacroF1=macro,ByClass=byClass,Correct=correct,Total=#rows}
+end
+
+local function classificationTree(rows,depth,maxDepth,rng,randomized)
+    local counts={0,0,0,0}
+    for _,row in ipairs(rows) do counts[row.y]=counts[row.y]+1 end
+    local majority,bestCount=1,-1
+    for c=1,4 do if counts[c]>bestCount then majority,bestCount=c,counts[c] end end
+    if depth>=maxDepth or #rows<8 or bestCount==#rows then return {leaf=majority} end
+    local candidates={1,2,3,4,5,6,7,8}
+    if randomized then
+        for i=8,2,-1 do
+            local j=rng:NextInteger(1,i)
+            candidates[i],candidates[j]=candidates[j],candidates[i]
+        end
+    end
+    local bestScore=math.huge
+    local bestFeature,bestThreshold
+    local featureCount=randomized and 3 or 8
+    for ci=1,featureCount do
+        local feature=candidates[ci]
+        local ordered=table.clone(rows)
+        table.sort(ordered,function(a,b) return a.f[feature]<b.f[feature] end)
+        local left={0,0,0,0}
+        local right=table.clone(counts)
+        for i=1,#ordered-1 do
+            local label=ordered[i].y
+            left[label]=left[label]+1
+            right[label]=right[label]-1
+            local nLeft,nRight=i,#ordered-i
+            if ordered[i].f[feature]<ordered[i+1].f[feature] and nLeft>=4 and nRight>=4 then
+                local leftSquare,rightSquare=0,0
+                for c=1,4 do
+                    leftSquare=leftSquare+left[c]*left[c]
+                    rightSquare=rightSquare+right[c]*right[c]
+                end
+                local score=nLeft-leftSquare/nLeft+nRight-rightSquare/nRight
+                if score<bestScore-0.0000001 then
+                    bestScore=score
+                    bestFeature=feature
+                    bestThreshold=(ordered[i].f[feature]+ordered[i+1].f[feature])/2
+                end
+            end
+        end
+    end
+    if not bestFeature then return {leaf=majority} end
+    local leftRows,rightRows={},{}
+    for _,row in ipairs(rows) do
+        if row.f[bestFeature]<=bestThreshold then table.insert(leftRows,row)
+        else table.insert(rightRows,row) end
+    end
+    return {feature=bestFeature,threshold=bestThreshold,
+        left=classificationTree(leftRows,depth+1,maxDepth,rng,randomized),
+        right=classificationTree(rightRows,depth+1,maxDepth,rng,randomized)}
+end
+function M.TrainForest(rows,count,depth)
+    assert(isInteger(count,3,11) and isInteger(depth,2,5),"Invalid forest controls")
+    local rng=Random.new(1841+count*17+depth)
+    local trees={}
+    for i=1,count do
+        local sample={}
+        for j=1,#rows do sample[j]=rows[rng:NextInteger(1,#rows)] end
+        trees[i]=classificationTree(sample,0,depth,rng,true)
+        if i%2==0 then task.wait() end
+    end
+    return trees
+end
+local function predictClassification(row,node)
+    while not node.leaf do
+        node=row.f[node.feature]<=node.threshold and node.left or node.right
+    end
+    return node.leaf
+end
+function M.PredictForest(row,trees)
+    local votes={0,0,0,0}
+    for _,tree in ipairs(trees) do
+        local label=predictClassification(row,tree)
+        votes[label]=votes[label]+1
+    end
+    local best=1
+    for c=2,4 do if votes[c]>votes[best] then best=c end end
+    return best,votes
+end
+
+local function regressionTree(rows,indices,targets,depth,maxDepth)
+    local total=0
+    for _,index in ipairs(indices) do total=total+targets[index] end
+    local mean=total/#indices
+    if depth>=maxDepth or #indices<30 then return {value=mean} end
+    local bestGain=0.00000001
+    local bestFeature,bestThreshold
+    local bins=16
+    for feature=1,8 do
+        local meta=M.Features[feature]
+        local span=meta.Max-meta.Min
+        local binCounts,binSums={},{}
+        for b=1,bins do binCounts[b],binSums[b]=0,0 end
+        for _,index in ipairs(indices) do
+            local value=rows[index].f[feature]
+            local bucket=math.clamp(math.floor((value-meta.Min)/span*bins)+1,1,bins)
+            binCounts[bucket]=binCounts[bucket]+1
+            binSums[bucket]=binSums[bucket]+targets[index]
+        end
+        local leftCount,leftSum=0,0
+        for b=1,bins-1 do
+            leftCount=leftCount+binCounts[b]
+            leftSum=leftSum+binSums[b]
+            local rightCount=#indices-leftCount
+            if leftCount>=15 and rightCount>=15 then
+                local rightSum=total-leftSum
+                local gain=leftSum*leftSum/leftCount+rightSum*rightSum/rightCount-total*total/#indices
+                if gain>bestGain then
+                    bestGain=gain
+                    bestFeature=feature
+                    bestThreshold=meta.Min+span*b/bins
+                end
+            end
+        end
+    end
+    if not bestFeature then return {value=mean} end
+    local left,right={},{}
+    for _,index in ipairs(indices) do
+        if rows[index].f[bestFeature]<bestThreshold then table.insert(left,index)
+        else table.insert(right,index) end
+    end
+    if #left<15 or #right<15 then return {value=mean} end
+    return {feature=bestFeature,threshold=bestThreshold,
+        left=regressionTree(rows,left,targets,depth+1,maxDepth),
+        right=regressionTree(rows,right,targets,depth+1,maxDepth)}
+end
+local function predictRegression(row,node)
+    while node.value==nil do
+        node=row.f[node.feature]<node.threshold and node.left or node.right
+    end
+    return node.value
+end
+function M.TrainGradientBoosting(rows,rounds,depth)
+    assert(isInteger(rounds,10,60) and rounds%10==0 and isInteger(depth,1,3),"Invalid gradient boosting controls")
+    local priors={0,0,0,0}
+    for _,row in ipairs(rows) do priors[row.y]=priors[row.y]+1 end
+    local base={}
+    for c=1,4 do base[c]=math.log(math.max(priors[c]/#rows,0.000001)) end
+    local logits={}
+    local indices={}
+    for i=1,#rows do logits[i]=table.clone(base); indices[i]=i end
+    local stages={}
+    local rate=0.2
+    for round=1,rounds do
+        local residuals={{},{},{},{}}
+        for i,row in ipairs(rows) do
+            local maximum=math.max(logits[i][1],logits[i][2],logits[i][3],logits[i][4])
+            local exponents={}
+            local denominator=0
+            for c=1,4 do
+                exponents[c]=math.exp(logits[i][c]-maximum)
+                denominator=denominator+exponents[c]
+            end
+            for c=1,4 do residuals[c][i]=(row.y==c and 1 or 0)-exponents[c]/denominator end
+        end
+        local stage={}
+        for c=1,4 do
+            local tree=regressionTree(rows,indices,residuals[c],0,depth)
+            stage[c]=tree
+            for i,row in ipairs(rows) do
+                logits[i][c]=logits[i][c]+rate*predictRegression(row,tree)
+            end
+        end
+        stages[round]=stage
+        if round%5==0 then task.wait() end
+    end
+    return {base=base,stages=stages,rate=rate}
+end
+function M.PredictGradientBoosting(row,model)
+    local scores=table.clone(model.base)
+    for _,stage in ipairs(model.stages) do
+        for c=1,4 do scores[c]=scores[c]+model.rate*predictRegression(row,stage[c]) end
+    end
+    local best=1
+    for c=2,4 do if scores[c]>scores[best] then best=c end end
+    return best,scores
+end
+------------------------------------------------------------------------
+-- Наглядное обучение (лаборатория, уровни 2 и 3)
+-- ForestTrace: «лес голосует» — корзины деревьев (бэггинг), голос каждого дерева,
+--   точность одного дерева и леса из k деревьев на test, согласие деревьев между собой.
+-- BoostTrace: «бустинг исправляет ошибки» — обучение по раундам с историей:
+--   точность train/test после каждого раунда, уверенность в истинном классе для каждой учебной партии.
+-- Алгоритмы те же, что в TrainForest / TrainGradientBoosting (при шаге 0,2 бустинг совпадает с ним).
+------------------------------------------------------------------------
+local function argmax4(v)
+    local best=1
+    for c=2,4 do if v[c]>v[best] then best=c end end
+    return best
+end
+local function softmax4(scores)
+    local maximum=math.max(scores[1],scores[2],scores[3],scores[4])
+    local e,sum={},0
+    for c=1,4 do e[c]=math.exp(scores[c]-maximum); sum=sum+e[c] end
+    for c=1,4 do e[c]=e[c]/sum end
+    return e
+end
+M.Softmax=softmax4
+M.LearningRates={0.05,0.1,0.2,0.5}
+
+-- Первый вопрос дерева: {Feature=номер признака, Threshold=порог} или nil, если дерево — один лист
+local function rootQuestion(node)
+    if node.leaf or node.value~=nil then return nil end
+    return {Feature=node.feature,Threshold=node.threshold}
+end
+M.RootQuestion=rootQuestion
+
+function M.ForestTrace(train,test,count,depth,randomFeatures)
+    assert(isInteger(count,1,11) and isInteger(depth,2,5),"Invalid forest controls")
+    local rng=Random.new(1841+count*17+depth+(randomFeatures and 0 or 977))
+    local trees,bags={},{}
+    for i=1,count do
+        local sample,seen,unique,classes={},{},0,{0,0,0,0}
+        for j=1,#train do
+            local k=rng:NextInteger(1,#train)
+            sample[j]=train[k]
+            if not seen[k] then seen[k]=true; unique=unique+1 end
+            classes[train[k].y]=classes[train[k].y]+1
+        end
+        trees[i]=classificationTree(sample,0,depth,rng,randomFeatures)
+        bags[i]={Size=#train,Unique=unique,Classes=classes}
+        if i%2==0 then task.wait() end
+    end
+    local perTree={}
+    for i,tree in ipairs(trees) do
+        local preds,correct={},0
+        for r,row in ipairs(test) do
+            local guess=predictClassification(row,tree)
+            preds[r]=guess
+            if guess==row.y then correct=correct+1 end
+        end
+        perTree[i]={Accuracy=correct/#test,Preds=preds}
+    end
+    -- точность леса из первых k деревьев (те же правила голосования, что в PredictForest)
+    local accByCount={}
+    for k=1,count do
+        local correct=0
+        for r,row in ipairs(test) do
+            local votes={0,0,0,0}
+            for i=1,k do local g=perTree[i].Preds[r]; votes[g]=votes[g]+1 end
+            if argmax4(votes)==row.y then correct=correct+1 end
+        end
+        accByCount[k]=correct/#test
+    end
+    -- насколько деревья похожи: доля партий, на которых пара деревьев голосует одинаково
+    local agreement,pairsCount=0,0
+    for i=1,count do
+        for j=i+1,count do
+            local same=0
+            for r=1,#test do
+                if perTree[i].Preds[r]==perTree[j].Preds[r] then same=same+1 end
+            end
+            agreement=agreement+same/#test
+            pairsCount=pairsCount+1
+        end
+    end
+    return {Trees=trees,Bags=bags,PerTree=perTree,AccByCount=accByCount,
+        Agreement=pairsCount>0 and agreement/pairsCount or 1}
+end
+function M.PredictForestTrace(row,trace)
+    local votes,ballots={0,0,0,0},{}
+    for i,tree in ipairs(trace.Trees) do
+        local guess=predictClassification(row,tree)
+        ballots[i]=guess
+        votes[guess]=votes[guess]+1
+    end
+    return argmax4(votes),votes,ballots
+end
+
+function M.BoostTrace(train,test,rounds,depth,rate)
+    assert(isInteger(rounds,1,60) and isInteger(depth,1,3),"Invalid gradient boosting controls")
+    assert(table.find(M.LearningRates,rate),"Invalid learning rate")
+    local priors={0,0,0,0}
+    for _,row in ipairs(train) do priors[row.y]=priors[row.y]+1 end
+    local base={}
+    for c=1,4 do base[c]=math.log(math.max(priors[c]/#train,0.000001)) end
+    local logits,indices,testLogits={},{},{}
+    for i=1,#train do logits[i]=table.clone(base); indices[i]=i end
+    for i=1,#test do testLogits[i]=table.clone(base) end
+    local trainAcc,testAcc,pTrue={},{},{}
+    local function record(round)
+        local correct,probs=0,{}
+        for i,row in ipairs(train) do
+            if argmax4(logits[i])==row.y then correct=correct+1 end
+            probs[i]=softmax4(logits[i])[row.y]
+        end
+        trainAcc[round+1]=correct/#train
+        pTrue[round+1]=probs
+        local tc=0
+        for i,row in ipairs(test) do
+            if argmax4(testLogits[i])==row.y then tc=tc+1 end
+        end
+        testAcc[round+1]=tc/#test
+    end
+    record(0)
+    local stages={}
+    for round=1,rounds do
+        local residuals={{},{},{},{}}
+        for i,row in ipairs(train) do
+            local p=softmax4(logits[i])
+            for c=1,4 do residuals[c][i]=(row.y==c and 1 or 0)-p[c] end
+        end
+        local stage={}
+        for c=1,4 do
+            local tree=regressionTree(train,indices,residuals[c],0,depth)
+            stage[c]=tree
+            for i,row in ipairs(train) do logits[i][c]=logits[i][c]+rate*predictRegression(row,tree) end
+            for i,row in ipairs(test) do testLogits[i][c]=testLogits[i][c]+rate*predictRegression(row,tree) end
+        end
+        stages[round]=stage
+        record(round)
+        if round%5==0 then task.wait() end
+    end
+    -- TrainAcc/TestAcc/PTrue: индекс 1 — до обучения (раунд 0), индекс r+1 — после раунда r
+    return {base=base,stages=stages,rate=rate,TrainAcc=trainAcc,TestAcc=testAcc,PTrue=pTrue}
+end
+-- Прогноз после первых rounds раундов: класс и вероятности классов
+function M.PredictBoostAt(row,trace,rounds)
+    local scores=table.clone(trace.base)
+    for r=1,math.min(rounds,#trace.stages) do
+        local stage=trace.stages[r]
+        for c=1,4 do scores[c]=scores[c]+trace.rate*predictRegression(row,stage[c]) end
+    end
+    local probs=softmax4(scores)
+    return argmax4(scores),probs
+end
+
+return M
+]]></string>
+      </Properties>
+    </Item>
   </Item>
-  <Item class="ServerScriptService" referent="58">
+  <Item class="ServerScriptService" referent="59">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="59">
+    <Item class="Script" referent="60">
       <Properties>
         <string name="Name">RegressionTests</string>
         <bool name="Disabled">false</bool>
@@ -9136,11 +9597,11 @@ end
 ]]></string>
       </Properties>
     </Item>
-    <Item class="Folder" referent="60">
+    <Item class="Folder" referent="61">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Script" referent="61">
+      <Item class="Script" referent="62">
         <Properties>
           <string name="Name">RegressionProgress</string>
           <string name="Source"><![CDATA[-- RegressionProgress: вехи модуля «Регрессия» от клиента → LearningService (как у других уроков SkRob).
@@ -9174,7 +9635,7 @@ end)
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="62">
+      <Item class="Script" referent="63">
         <Properties>
           <string name="Name">DecisionTreeLevelService</string>
           <string name="Source">warn("========== DECISION TREE SERVICE STARTED ==========")
@@ -11180,7 +11641,7 @@ game:BindToClose(
 )</string>
         </Properties>
       </Item>
-      <Item class="Script" referent="63">
+      <Item class="Script" referent="64">
         <Properties>
           <string name="Name">TreeLevelZoneController</string>
           <string name="Source"><![CDATA[local Players =
@@ -12373,7 +12834,7 @@ game:BindToClose(
         </Properties>
       </Item>
     </Item>
-    <Item class="Script" referent="64">
+    <Item class="Script" referent="65">
       <Properties>
         <string name="Name">RegressionLevelServer</string>
         <string name="Source"><![CDATA[-- RegressionLevelServer: копирует CFrame и Size площадок уровня «Регрессия» в атрибуты папки
@@ -12400,7 +12861,7 @@ level.ChildAdded:Connect(publish)
 ]]></string>
       </Properties>
     </Item>
-    <Item class="Script" referent="65">
+    <Item class="Script" referent="66">
       <Properties>
         <string name="Name">DecisionTreeLabService</string>
         <string name="Source"><![CDATA[local Players=game:GetService("Players")
@@ -12419,7 +12880,6 @@ end
 -- Прогресс лаборатории НЕ сохраняется между заходами: каждый новый заход начинается с уровня 1 (только память сервера).
 local progress={}
 local busy={}
-local modelCache={Forest={},Boost={}}
 local stageIndex={Tree=1,Forest=2,Boost=3}
 local gates={
     Tree={Accuracy=0.95,MacroF1=0.95},
@@ -12445,33 +12905,117 @@ local function authorize(player,mode)
     assert(index<=state.Unlocked,"Finish the preceding lesson first")
     return state,index
 end
+-- Модели леса и бустинга обучаются через трассировки (те же алгоритмы, что TrainForest/TrainGradientBoosting,
+-- плюс история для наглядных режимов «лес голосует» и «бустинг по раундам») и кешируются на сервере.
+local traceCache={Forest={},Boost={}}
+local training={}
+local function cached(kind,key,build)
+    local full=kind..":"..key
+    while training[full] do task.wait(0.1) end
+    local value=traceCache[kind][key]
+    if value then return value end
+    training[full]=true
+    local ok,result=pcall(build)
+    training[full]=nil
+    if not ok then error(result) end
+    traceCache[kind][key]=result
+    return result
+end
+local function forestConfig(config)
+    local count,depth=config.Count,config.Depth
+    assert(integer(count,3,11) and integer(depth,2,5),"Invalid forest controls")
+    local randomFeatures=config.RandomFeatures~=false
+    return count,depth,randomFeatures
+end
+local function forestTrace(config)
+    local count,depth,randomFeatures=forestConfig(config)
+    return cached("Forest",count..":"..depth..":"..tostring(randomFeatures),function()
+        return M.ForestTrace(data.Forest.train,data.Forest.test,count,depth,randomFeatures)
+    end)
+end
+local function boostConfig(config,allowZero)
+    local rounds,depth=config.Rounds,config.Depth
+    local rate=config.Rate or 0.2
+    assert(integer(rounds,allowZero and 0 or 1,60) and integer(depth,1,3),"Invalid gradient boosting controls")
+    assert(table.find(M.LearningRates,rate),"Invalid learning rate")
+    return rounds,depth,rate
+end
+local function boostTrace(depth,rate)
+    -- обучаем сразу на все 60 раундов: любой раунд потом — срез без переобучения
+    return cached("Boost",depth..":"..rate,function()
+        return M.BoostTrace(data.Boost.train,data.Boost.test,60,depth,rate)
+    end)
+end
 local function classifier(mode,config)
     assert(type(config)=="table","Missing model configuration")
     if mode=="Tree" then
         local graph=M.ValidateGraph(config.Graph)
         return function(row) return M.PredictGraph(row,graph) end
     elseif mode=="Forest" then
-        local count,depth=config.Count,config.Depth
-        assert(integer(count,3,11) and integer(depth,2,5),"Invalid forest controls")
-        local cacheKey=count..":"..depth
-        local trees=modelCache.Forest[cacheKey]
-        if not trees then
-            trees=M.TrainForest(data.Forest.train,count,depth)
-            modelCache.Forest[cacheKey]=trees
-        end
-        return function(row) return M.PredictForest(row,trees) end
+        local trace=forestTrace(config)
+        return function(row) return M.PredictForestTrace(row,trace) end
     elseif mode=="Boost" then
-        local rounds,depth=config.Rounds,config.Depth
-        assert(integer(rounds,10,60) and rounds%10==0 and integer(depth,1,3),"Invalid gradient boosting controls")
-        local cacheKey=rounds..":"..depth
-        local model=modelCache.Boost[cacheKey]
-        if not model then
-            model=M.TrainGradientBoosting(data.Boost.train,rounds,depth)
-            modelCache.Boost[cacheKey]=model
-        end
-        return function(row) return M.PredictGradientBoosting(row,model) end
+        local rounds,depth,rate=boostConfig(config,false)
+        local trace=boostTrace(depth,rate)
+        return function(row) return M.PredictBoostAt(row,trace,rounds) end
     end
     error("Unknown lesson level")
+end
+local function question(node)
+    local q=M.RootQuestion(node)
+    if not q then return nil end
+    local meta=M.Features[q.Feature]
+    return {Feature=meta.Name,Threshold=q.Threshold,Decimals=meta.Decimals}
+end
+-- «Лес голосует»: корзины деревьев, голос каждого дерева за выбранную партию, точность от числа деревьев
+local function forestExplain(config,row,index,total)
+    local trace=forestTrace(config)
+    local guess,votes,ballots=M.PredictForestTrace(row,trace)
+    local trees,singleSum={},0
+    for i,tree in ipairs(trace.Trees) do
+        local bag=trace.Bags[i]
+        trees[i]={Unique=bag.Unique,Size=bag.Size,Classes=table.clone(bag.Classes),Root=question(tree),
+            Vote=M.Labels[ballots[i]],Accuracy=trace.PerTree[i].Accuracy}
+        singleSum=singleSum+trace.PerTree[i].Accuracy
+    end
+    return {Id=row.id,Index=index,Total=total,Actual=M.Labels[row.y],Forest=M.Labels[guess],Votes=votes,
+        Trees=trees,AccByCount=table.clone(trace.AccByCount),Agreement=trace.Agreement,Single=singleSum/#trace.Trees,
+        RandomFeatures=config.RandomFeatures~=false}
+end
+-- «Бустинг по раундам»: что изменил каждый раунд для выбранной партии и для всей обучающей выборки
+local function boostExplain(config,row,index,total)
+    local rounds,depth,rate=boostConfig(config,true)
+    local trace=boostTrace(depth,rate)
+    local train=data.Boost.train
+    local history={}
+    for r=0,rounds do
+        local _,probs=M.PredictBoostAt(row,trace,r)
+        history[r+1]=probs[row.y]
+    end
+    local guess,probs=M.PredictBoostAt(row,trace,rounds)
+    local pTrue=trace.PTrue[rounds+1]
+    local order={}
+    for i=1,#train do order[i]=i end
+    table.sort(order,function(x,y) return pTrue[x]<pTrue[y] end)
+    local hard={}
+    for k=1,5 do
+        local i=order[k]
+        hard[k]={Id=train[i].id,P=pTrue[i],Actual=M.Labels[train[i].y]}
+    end
+    local lastStage=nil
+    if rounds>=1 then
+        lastStage={}
+        for c=1,4 do lastStage[c]=question(trace.stages[rounds][c]) or false end
+    end
+    local bestRound,bestAcc=0,-1
+    for r=0,rounds do
+        if trace.TestAcc[r+1]>bestAcc+0.0005 then bestRound,bestAcc=r,trace.TestAcc[r+1] end
+    end
+    return {Round=rounds,Depth=depth,Rate=rate,Id=row.id,Index=index,Total=total,Actual=M.Labels[row.y],
+        Guess=M.Labels[guess],Probs=probs,History=history,
+        TrainAcc=table.move(trace.TrainAcc,1,rounds+1,1,{}),TestAcc=table.move(trace.TestAcc,1,rounds+1,1,{}),
+        TrainTotal=#train,Wrong=#train-math.floor(trace.TrainAcc[rounds+1]*#train+0.5),
+        Hard=hard,LastStage=lastStage,BestTestRound=bestRound}
 end
 local function promote(player,state,index)
     if state.Unlocked>index then return end
@@ -12489,10 +13033,18 @@ local function handle(player,action,mode,config,index)
         assert(row,"Batch not found")
         return {Id=row.id,Features=table.clone(row.f),Index=index,Total=total}
     end
-    assert(action=="Evaluate" or action=="Simulate","Unknown action")
+    assert(action=="Evaluate" or action=="Simulate" or action=="ForestExplain" or action=="BoostExplain","Unknown action")
     assert(not busy[player],"Model request already running")
     busy[player]=true
     local success,result=pcall(function()
+        if action=="ForestExplain" or action=="BoostExplain" then
+            assert(mode==(action=="ForestExplain" and "Forest" or "Boost"),"Wrong lesson level")
+            assert(type(config)=="table","Missing model configuration")
+            assert(integer(index,1,total),"Invalid batch index")
+            local row=data[mode].test[index]
+            if action=="ForestExplain" then return forestExplain(config,row,index,total) end
+            return boostExplain(config,row,index,total)
+        end
         local predict=classifier(mode,config)
         if action=="Simulate" then
             -- «Посмотреть на test-датасете»: прогноз модели для одной выбранной партии
@@ -12523,15 +13075,15 @@ end)
       </Properties>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="66">
+  <Item class="StarterPlayer" referent="67">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="67">
+    <Item class="StarterPlayerScripts" referent="68">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="68">
+      <Item class="LocalScript" referent="69">
         <Properties>
           <string name="Name">RegressionClient</string>
           <bool name="Disabled">false</bool>
@@ -12899,7 +13451,7 @@ end
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="69">
+      <Item class="LocalScript" referent="70">
         <Properties>
           <string name="Name">LevelFlowController</string>
           <string name="Source"><![CDATA[local Players =
@@ -13765,15 +14317,15 @@ updateStatus()
       </Item>
     </Item>
   </Item>
-  <Item class="StarterGui" referent="70">
+  <Item class="StarterGui" referent="71">
     <Properties>
       <string name="Name">StarterGui</string>
     </Properties>
-    <Item class="Folder" referent="71">
+    <Item class="Folder" referent="72">
       <Properties>
         <string name="Name">DecisionTreeLabUI</string>
       </Properties>
-      <Item class="LocalScript" referent="72">
+      <Item class="LocalScript" referent="73">
         <Properties>
           <string name="Name">DecisionTreeLabController</string>
           <string name="Source"><![CDATA[local RS=game:GetService("ReplicatedStorage")
@@ -13807,7 +14359,10 @@ local success=false
 local status="Построй дерево: выбери лист, добавь развилку и настрой обе ветви. Потом пройди окончательную проверку на всём test-датасете уровня."
 local statusColor=muted
 local forestCount,forestDepth=5,3
-local boostRounds,boostDepth=20,2
+local forestRandom=true
+local forestView -- ответ ForestExplain для «лес голосует»
+local boostRound,boostDepth,boostRate=0,2,0.2
+local boostView -- ответ BoostExplain для «бустинг по раундам»
 local renderMain,renderPanels
 
 local function frame(name,parent,size,pos,color,radius)
@@ -13904,6 +14459,7 @@ for i,item in ipairs(tabDefs) do
             return
         end
         tab=item[1]; sampleIndex=1; metric=nil; success=false
+        forestView=nil; boostView=nil; boostRound=0
         local value=request("GetBatch",tab,nil,sampleIndex)
         if value then batch=value; batchTotal=value.Total or batchTotal end
         status="Уровень "..i.." открыт."
@@ -14128,12 +14684,55 @@ local function alternateControl(title,value,down,up)
 end
 local function configuration()
     if tab=="Tree" then return {Graph=graph} end
-    if tab=="Forest" then return {Count=forestCount,Depth=forestDepth} end
-    return {Rounds=boostRounds,Depth=boostDepth}
+    if tab=="Forest" then return {Count=forestCount,Depth=forestDepth,RandomFeatures=forestRandom} end
+    return {Rounds=boostRound,Depth=boostDepth,Rate=boostRate}
+end
+local function percent(value) return string.format("%.1f%%",value*100) end
+local function questionText(q)
+    if not q then return "лист без вопроса" end
+    return string.format("%s ≤ %."..q.Decimals.."f ?",q.Feature,q.Threshold)
+end
+-- A · «Лес голосует»: каждое дерево — своя корзина партий и свой голос за выбранную партию урожая
+local function explainForest()
+    status="Лес собирается: каждое дерево получает свою корзину из 1080 учебных партий..."
+    statusColor=muted; renderPanels()
+    local result=request("ForestExplain","Forest",configuration(),sampleIndex)
+    if not result then return end
+    forestView=result
+    local right=result.Forest==result.Actual
+    status="Партия "..result.Id..": лес проголосовал за "..result.Forest..", истинный класс "..result.Actual..
+        (right and " — верно." or " — ошибка.").."\nЛистай партии ◀ ▶ — голоса обновятся."
+    statusColor=right and green or Color3.fromRGB(243,180,78)
+    renderMain(); renderPanels()
+end
+-- B · «Бустинг исправляет ошибки»: раунд за раундом, каждое новое дерево учится на остатках ошибок
+local function explainBoost()
+    local result=request("BoostExplain","Boost",configuration(),sampleIndex)
+    if not result then return end
+    boostView=result
+    if result.Round==0 then
+        status="Раунд 0: модель знает только, какие классы встречаются чаще. Нажми «+1 РАУНД»."
+        statusColor=muted
+    else
+        local right=result.Guess==result.Actual
+        status="Раунд "..result.Round..": партия "..result.Id.." → "..result.Guess..", истинный класс "..result.Actual..
+            (right and " — верно." or " — пока ошибка.").." Ошибок на обучении: "..result.Wrong.." из "..result.TrainTotal.."."
+        statusColor=right and green or Color3.fromRGB(243,180,78)
+    end
+    renderMain(); renderPanels()
+end
+local function setBoostRound(value)
+    boostRound=math.clamp(value,0,60); metric=nil; success=false
+    explainBoost()
 end
 -- «Пройти окончательную проверку»: сервер прогоняет модель по ВСЕМ партиям test-датасета уровня
 local function evaluate()
     status="Окончательная проверка: модель сортирует все "..batchTotal.." партий test-датасета уровня..."
+    if tab=="Boost" and boostRound==0 then
+        status="Сначала обучи хотя бы один раунд бустинга (+1 РАУНД)."
+        statusColor=Color3.fromRGB(243,180,78); renderPanels()
+        return
+    end
     statusColor=muted; renderPanels()
     local result=request("Evaluate",tab,configuration())
     if not result then return end
@@ -14186,6 +14785,8 @@ local function stepBatch(delta)
         status="Партия "..value.Id.." ("..sampleIndex.." из "..batchTotal.."). Истинный класс скрыт, пока модель её не отсортирует."
         statusColor=muted
         renderPanels()
+        if tab=="Forest" and forestView then explainForest() end
+        if tab=="Boost" and boostView then explainBoost() end
     end
 end
 button("Prev",footer,"◀ ПАРТИЯ",UDim2.new(0.13,-10,0,40),UDim2.fromOffset(10,9),
@@ -14205,42 +14806,179 @@ renderMain=function()
         return
     end
     clearGenerated(alternate)
+    local function block(name,height)
+        local row=frame(name,alternate,UDim2.new(1,-12,0,height),UDim2.fromOffset(0,0),dark,9)
+        row.LayoutOrder=#alternate:GetChildren()+1
+        return row
+    end
+    local function rect(name,parent,size,pos,color)
+        local x=frame(name,parent,size,pos,color)
+        return x
+    end
+    local function changed() metric=nil; success=false; renderMain(); renderPanels() end
+    local function finalCheck(text)
+        local row=block("Train",64)
+        button("Start",row,"ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ",UDim2.new(1,-24,0,42),UDim2.fromOffset(12,11),
+            Color3.fromRGB(196,139,34),dark,evaluate)
+        alternateLine(text,70,muted,false)
+    end
     if tab=="Forest" then
-        alternateLine("2 / СЛУЧАЙНЫЙ ЛЕС",52,warm,true)
-        alternateLine("Каждое дерево учится на случайной выборке из 1080 учебных партий. На каждой развилке оно рассматривает случайные признаки. Итог — большинство голосов.",90,white,false)
+        alternateLine("2 / СЛУЧАЙНЫЙ ЛЕС · ЛЕС ГОЛОСУЕТ",52,warm,true)
+        alternateLine("Каждое дерево получает свою корзину: 1080 партий, вытянутых из учебного урожая с возвращением (одни партии попадут дважды, другие — ни разу). Деревья выходят разными, и каждое голосует за класс. Ответ леса — большинство голосов.",104,white,false)
         alternateControl("Деревья",forestCount,function()
-            forestCount=math.max(3,forestCount-2); metric=nil; success=false; renderMain(); renderPanels()
+            forestCount=math.max(3,forestCount-2); forestView=nil; changed()
         end,function()
-            forestCount=math.min(11,forestCount+2); metric=nil; success=false; renderMain(); renderPanels()
+            forestCount=math.min(11,forestCount+2); forestView=nil; changed()
         end)
         alternateControl("Глубина",forestDepth,function()
-            forestDepth=math.max(2,forestDepth-1); metric=nil; success=false; renderMain(); renderPanels()
+            forestDepth=math.max(2,forestDepth-1); forestView=nil; changed()
         end,function()
-            forestDepth=math.min(5,forestDepth+1); metric=nil; success=false; renderMain(); renderPanels()
+            forestDepth=math.min(5,forestDepth+1); forestView=nil; changed()
         end)
-        local row=frame("Train",alternate,UDim2.new(1,-12,0,64),UDim2.fromOffset(0,0),dark,9)
-        row.LayoutOrder=#alternate:GetChildren()+1
-        button("Start",row,"ОБУЧИТЬ ЛЕС И ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ",UDim2.new(1,-24,0,42),UDim2.fromOffset(12,11),
-            Color3.fromRGB(196,139,34),dark,evaluate)
-        alternateLine("Для SUCCESS нужны точность ≥78% и Macro-F1 ≥0,75 на всём test-датасете уровня ("..batchTotal.." партий). Увеличение глубины и числа деревьев расходует больше вычислений.",83,muted,false)
+        local toggle=block("RandomFeatures",65)
+        label("Caption",toggle,"Случайные признаки на развилках",UDim2.new(1,-220,1,0),UDim2.fromOffset(14,0),16,white,true)
+        button("Toggle",toggle,forestRandom and "ВКЛ" or "ВЫКЛ",UDim2.fromOffset(190,38),UDim2.new(1,-202,0,13),
+            forestRandom and Color3.fromRGB(97,114,84) or Color3.fromRGB(74,80,90),white,function()
+            forestRandom=not forestRandom; forestView=nil; changed()
+        end)
+        local grow=block("Grow",64)
+        button("Explain",grow,"СОБРАТЬ ЛЕС И ПОКАЗАТЬ ГОЛОСА",UDim2.new(1,-24,0,42),UDim2.fromOffset(12,11),
+            Color3.fromRGB(97,114,84),white,explainForest)
+        local view=forestView
+        if view then
+            local votes={}
+            for c=1,4 do votes[c]=labels[c].." "..view.Votes[c] end
+            alternateLine("Партия "..view.Id.." ("..view.Index.." из "..view.Total.."): голоса "..table.concat(votes," · ")..
+                "  →  лес: "..view.Forest.."   ·   истинный класс: "..view.Actual..(view.Forest==view.Actual and "  ✔" or "  ✘"),
+                52,view.Forest==view.Actual and green or Color3.fromRGB(243,180,78),true)
+            local columns=4
+            local rows=math.ceil(#view.Trees/columns)
+            local grid=block("Trees",rows*156+8)
+            grid.BackgroundTransparency=1
+            for i,tree in ipairs(view.Trees) do
+                local col,row=(i-1)%columns,math.floor((i-1)/columns)
+                local cardFrame=frame("Tree"..i,grid,UDim2.new(1/columns,-8,0,148),UDim2.new(col/columns,4,0,row*156+4),panel,9)
+                local vote=table.find(labels,tree.Vote) or 1
+                label("Name",cardFrame,"ДЕРЕВО "..i,UDim2.new(0.6,-10,0,22),UDim2.fromOffset(10,6),14,warm,true)
+                local badge=frame("Vote",cardFrame,UDim2.fromOffset(46,30),UDim2.new(1,-54,0,6),colors[vote],8)
+                label("Letter",badge,tree.Vote,UDim2.fromScale(1,1),UDim2.fromScale(0,0),18,dark,true,true)
+                label("Bag",cardFrame,"Корзина: "..tree.Size.." партий, разных "..tree.Unique,UDim2.new(1,-20,0,20),UDim2.fromOffset(10,38),12,muted,false)
+                local strip=frame("Classes",cardFrame,UDim2.new(1,-20,0,12),UDim2.fromOffset(10,60),dark,4)
+                local offset=0
+                for c=1,4 do
+                    local share=tree.Classes[c]/tree.Size
+                    rect("Class"..labels[c],strip,UDim2.new(share,0,1,0),UDim2.new(offset,0,0,0),colors[c])
+                    offset=offset+share
+                end
+                label("Root",cardFrame,"1-й вопрос: "..questionText(tree.Root),UDim2.new(1,-20,0,36),UDim2.fromOffset(10,76),12,white,false)
+                label("Accuracy",cardFrame,"Одно дерево на test: "..percent(tree.Accuracy),UDim2.new(1,-20,0,22),UDim2.fromOffset(10,116),12,muted,false)
+            end
+            -- точность леса из первых k деревьев: видно, как голосование выравнивает ошибки отдельных деревьев
+            local chart=block("AccuracyByCount",210)
+            label("Caption",chart,"Точность на test-датасете: лес из первых k деревьев",UDim2.new(1,-24,0,24),UDim2.fromOffset(12,6),14,warm,true)
+            local area=frame("Area",chart,UDim2.new(1,-24,0,150),UDim2.fromOffset(12,40),panel,6)
+            local low=0.4
+            local function height(value) return math.clamp((value-low)/(1-low),0,1) end
+            local gate=rect("Gate",area,UDim2.new(1,0,0,2),UDim2.new(0,0,1-height(0.78),0),warm)
+            gate.BackgroundTransparency=0.3
+            label("GateText",area,"порог 78%",UDim2.fromOffset(80,16),UDim2.new(1,-84,1-height(0.78),-18),11,warm,false)
+            local count=#view.AccByCount
+            for k,value in ipairs(view.AccByCount) do
+                local h=height(value)
+                local column=rect("Count"..k,area,UDim2.new(1/count,-10,h,0),UDim2.new((k-1)/count,5,1-h,0),
+                    value>=0.78 and green or Color3.fromRGB(110,140,190))
+                label("Value",column,string.format("%d",math.floor(value*100+0.5)),UDim2.new(1,0,0,16),UDim2.fromOffset(0,2),11,dark,true,true)
+                label("K",area,tostring(k),UDim2.new(1/count,0,0,14),UDim2.new((k-1)/count,0,1,2),11,muted,false,true)
+            end
+            alternateLine(string.format("Деревья согласны между собой в %s случаев. Среднее одно дерево: %s, лес из %d: %s. %s",
+                percent(view.Agreement),percent(view.Single),count,percent(view.AccByCount[count]),
+                view.RandomFeatures and "Случайные признаки делают деревья разными: их ошибки реже совпадают, и голосование их гасит."
+                    or "Без случайных признаков деревья похожи друг на друга и часто ошибаются вместе — включи их и сравни."),
+                88,white,false)
+        else
+            alternateLine("Нажми «Собрать лес и показать голоса»: увидишь корзины деревьев, их голоса за выбранную партию и как точность растёт с числом деревьев.",70,muted,false)
+        end
+        finalCheck("Для SUCCESS нужны точность ≥78% и Macro-F1 ≥0,75 на всём test-датасете уровня ("..batchTotal.." партий).")
     else
-        alternateLine("3 / ГРАДИЕНТНЫЙ БУСТИНГ",52,warm,true)
-        alternateLine("Настоящий многоклассовый gradient boosting: небольшие регрессионные деревья последовательно исправляют ошибки вероятностей классов. Источник — отдельный CSV из 3200 партий.",94,white,false)
-        alternateControl("Этапы",boostRounds,function()
-            boostRounds=math.max(10,boostRounds-10); metric=nil; success=false; renderMain(); renderPanels()
+        alternateLine("3 / ГРАДИЕНТНЫЙ БУСТИНГ · ИСПРАВЛЕНИЕ ОШИБОК",52,warm,true)
+        alternateLine("Модель начинает с догадки «как обычно» и обучается раундами. Каждый раунд маленькое дерево смотрит, где модель ошибается сильнее всего, и сдвигает вероятности классов. Шаг обучения — насколько сильно один раунд меняет ответ.",104,white,false)
+        alternateControl("Глубина деревьев",boostDepth,function()
+            boostDepth=math.max(1,boostDepth-1); boostView=nil; boostRound=0; changed()
         end,function()
-            boostRounds=math.min(60,boostRounds+10); metric=nil; success=false; renderMain(); renderPanels()
+            boostDepth=math.min(3,boostDepth+1); boostView=nil; boostRound=0; changed()
         end)
-        alternateControl("Глубина",boostDepth,function()
-            boostDepth=math.max(1,boostDepth-1); metric=nil; success=false; renderMain(); renderPanels()
+        local rates=M.LearningRates
+        alternateControl("Шаг обучения",boostRate,function()
+            local i=table.find(rates,boostRate) or 1
+            boostRate=rates[math.max(1,i-1)]; boostView=nil; boostRound=0; changed()
         end,function()
-            boostDepth=math.min(3,boostDepth+1); metric=nil; success=false; renderMain(); renderPanels()
+            local i=table.find(rates,boostRate) or 1
+            boostRate=rates[math.min(#rates,i+1)]; boostView=nil; boostRound=0; changed()
         end)
-        local row=frame("Train",alternate,UDim2.new(1,-12,0,64),UDim2.fromOffset(0,0),dark,9)
-        row.LayoutOrder=#alternate:GetChildren()+1
-        button("Start",row,"ОБУЧИТЬ БУСТИНГ И ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ",UDim2.new(1,-24,0,42),UDim2.fromOffset(12,11),
-            Color3.fromRGB(196,139,34),dark,evaluate)
-        alternateLine("Для SUCCESS нужны точность ≥70% и Macro-F1 ≥0,65 на всём test-датасете уровня ("..batchTotal.." партий). Больше этапов требуют больше вычислений.",80,muted,false)
+        local steps=block("Rounds",65)
+        label("Caption",steps,"Раунд "..boostRound.." из 60",UDim2.new(0.3,-14,1,0),UDim2.fromOffset(14,0),17,warm,true)
+        local function stepButton(name,text,index,value)
+            button(name,steps,text,UDim2.new(0.175,-8,0,38),UDim2.new(0.3+(index-1)*0.175,0,0,13),
+                Color3.fromRGB(74,80,90),white,function() setBoostRound(value) end)
+        end
+        stepButton("Reset","СНАЧАЛА",1,0)
+        stepButton("Back","−1",2,boostRound-1)
+        stepButton("Step","+1 РАУНД",3,boostRound+1)
+        stepButton("Step10","+10",4,boostRound+10)
+        local view=boostView
+        if view then
+            local actual=table.find(labels,view.Actual) or 1
+            local probs=block("Probabilities",150)
+            label("Caption",probs,"Партия "..view.Id.." ("..view.Index.." из "..view.Total.."): вероятности классов после раунда "..view.Round,
+                UDim2.new(1,-24,0,24),UDim2.fromOffset(12,6),14,warm,true)
+            for c=1,4 do
+                local y=34+(c-1)*28
+                local isActual=c==actual
+                label("Class"..labels[c],probs,labels[c]..(isActual and " ★" or ""),UDim2.fromOffset(44,24),UDim2.fromOffset(12,y),15,isActual and warm or white,true)
+                local track=frame("Track"..labels[c],probs,UDim2.new(1,-150,0,18),UDim2.fromOffset(60,y+3),panel,5)
+                rect("Fill",track,UDim2.new(math.clamp(view.Probs[c],0,1),0,1,0),UDim2.fromScale(0,0),colors[c])
+                label("P"..labels[c],probs,percent(view.Probs[c]),UDim2.fromOffset(80,24),UDim2.new(1,-84,0,y),14,white,isActual)
+            end
+            -- вероятность истинного класса этой партии раунд за раундом
+            local function pointChart(name,caption,series,colorsBySeries,mark)
+                local chart=block(name,190)
+                label("Caption",chart,caption,UDim2.new(1,-24,0,24),UDim2.fromOffset(12,6),14,warm,true)
+                local area=frame("Area",chart,UDim2.new(1,-24,0,130),UDim2.fromOffset(12,40),panel,6)
+                local n=math.max(#series[1]-1,1)
+                if mark then
+                    local line=rect("Best",area,UDim2.new(0,2,1,0),UDim2.new(mark/n,-1,0,0),warm)
+                    line.BackgroundTransparency=0.4
+                end
+                for s,values in ipairs(series) do
+                    for r,value in ipairs(values) do
+                        local dot=frame("Dot"..s.."_"..(r-1),area,UDim2.fromOffset(6,6),
+                            UDim2.new((r-1)/n,0,1-math.clamp(value,0,1),0),colorsBySeries[s],3)
+                        dot.AnchorPoint=Vector2.new(0.5,0.5)
+                    end
+                end
+                label("Axis",chart,"раунд 0 … "..(#series[1]-1),UDim2.new(1,-24,0,16),UDim2.fromOffset(12,172),11,muted,false)
+            end
+            pointChart("History","Вероятность истинного класса "..view.Actual.." для этой партии по раундам",{view.History},{colors[actual]})
+            if view.Round>=1 then
+                local parts={}
+                for c=1,4 do parts[c]=labels[c]..": "..questionText(view.LastStage[c] or nil) end
+                alternateLine("Деревья раунда "..view.Round.." (по одному на класс) спрашивают:\n"..table.concat(parts,"\n"),112,white,false)
+            end
+            local hard={}
+            for k,item in ipairs(view.Hard) do hard[k]=item.Id.." ("..item.Actual..", "..percent(item.P)..")" end
+            alternateLine("Ошибок на обучении: "..view.Wrong.." из "..view.TrainTotal..". Самые трудные партии — на них следующие деревья смотрят в первую очередь (класс, вероятность истинного класса):\n"..table.concat(hard,"  ·  "),
+                96,white,false)
+            pointChart("Overfit","Точность по раундам: ● train (учебный урожай)  ● test (новые партии)",
+                {view.TrainAcc,view.TestAcc},{Color3.fromRGB(110,140,190),green},view.BestTestRound)
+            local trainNow,testNow=view.TrainAcc[#view.TrainAcc],view.TestAcc[#view.TestAcc]
+            alternateLine(string.format("Сейчас: train %s, test %s. Лучший test был на раунде %d (жёлтая черта). %s",
+                percent(trainNow),percent(testNow),view.BestTestRound,
+                view.Round>view.BestTestRound+5 and "Train ещё растёт, а test — нет: модель начинает заучивать учебный урожай (переобучение)."
+                    or "Пока новые раунды помогают и на test."),70,white,false)
+        else
+            alternateLine("Нажми «+1 РАУНД», чтобы обучить первое дерево и увидеть, как меняются вероятности для выбранной партии.",56,muted,false)
+        end
+        finalCheck("Окончательная проверка использует модель из "..boostRound.." раундов. Для SUCCESS нужны точность ≥70% и Macro-F1 ≥0,65 на всём test-датасете уровня ("..batchTotal.." партий).")
     end
 end
 renderPanels=function()
@@ -14280,7 +15018,7 @@ prompt.Triggered:Connect(function() shade.Visible=true end)
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="73">
+      <Item class="LocalScript" referent="74">
         <Properties>
           <string name="Name">TreeCriteriaGuideController</string>
           <string name="Source"><![CDATA[local gui=script.Parent

@@ -2,7 +2,8 @@
 -- Лаборатория деревьев (DecisionTreeLab) на моке Roblox: сервер + клиент из team-patches, настоящие датасеты.
 -- Запуск: python3 tests/bundle.py && luau tests/lab.luau
 -- Проверяет: кнопки подвала (◀ ▶ по партиям, «Посмотреть на test-датасете», «Пройти окончательную проверку»),
--- партия = одна строка test-датасета, окончательная проверка — весь test-датасет уровня, прогресс без DataStore.
+-- партия = одна строка test-датасета, окончательная проверка — весь test-датасет уровня, прогресс без DataStore,
+-- режимы «Лес голосует» (ForestExplain) и «Бустинг исправляет ошибки» (BoostExplain).
 
 local R = require("./mock/Roblox")
 local files = require("./_bundle_team")
@@ -153,6 +154,109 @@ local r3 = invoke("Evaluate", "Boost", { Rounds = 60, Depth = 3 })
 ok("бустинг 60×3 проходит окончательную проверку (640 партий)", r3.Success and r3.Total == 640,
 	("acc %.3f f1 %.3f"):format(r3.Metrics.Accuracy, r3.Metrics.MacroF1))
 ok("все уровни лаборатории открыты в этой сессии", r3.Unlocked == 4, r3.Unlocked)
+
+-- ── A · «Лес голосует» и B · «Бустинг исправляет ошибки» (ответы сервера) ──
+local fx = invoke("ForestExplain", "Forest", { Count = 7, Depth = 4, RandomFeatures = true }, 5)
+ok("ForestExplain: 7 деревьев с корзинами и голосами", #fx.Trees == 7 and fx.Index == 5 and fx.Total == 360)
+local voteSum, bagOk = 0, true
+for c = 1, 4 do voteSum += fx.Votes[c] end
+for _, t in fx.Trees do
+	local n = 0
+	for c = 1, 4 do n += t.Classes[c] end
+	bagOk = bagOk and t.Size == 1080 and n == 1080 and t.Unique < 1080 and t.Unique > 500 and table.find({ "A", "B", "C", "D" }, t.Vote) ~= nil
+end
+ok("ForestExplain: голосов столько же, сколько деревьев", voteSum == 7, voteSum)
+ok("ForestExplain: корзины по 1080 партий с повторами (бэггинг)", bagOk)
+ok("ForestExplain: точность по числу деревьев для k=1..7", #fx.AccByCount == 7 and fx.Agreement > 0 and fx.Agreement < 1)
+ok("ForestExplain: лес из 7 точнее среднего дерева", fx.AccByCount[7] > fx.Single, ("%.3f vs %.3f"):format(fx.AccByCount[7], fx.Single))
+local fxSame = invoke("ForestExplain", "Forest", { Count = 7, Depth = 4, RandomFeatures = false }, 5)
+ok("без случайных признаков деревья согласнее", fxSame.Agreement > fx.Agreement, ("%.3f vs %.3f"):format(fxSame.Agreement, fx.Agreement))
+
+local bx0 = invoke("BoostExplain", "Boost", { Rounds = 0, Depth = 2, Rate = 0.2 }, 3)
+ok("BoostExplain: раунд 0 без деревьев", bx0.Round == 0 and #bx0.History == 1 and bx0.LastStage == nil)
+local bx = invoke("BoostExplain", "Boost", { Rounds = 30, Depth = 2, Rate = 0.2 }, 3)
+local pSum = 0
+for c = 1, 4 do pSum += bx.Probs[c] end
+ok("BoostExplain: вероятности классов в сумме 1", math.abs(pSum - 1) < 1e-6, pSum)
+ok("BoostExplain: история 31 точка, train/test по раундам", #bx.History == 31 and #bx.TrainAcc == 31 and #bx.TestAcc == 31)
+ok("BoostExplain: ошибок на обучении меньше, чем в раунде 0", bx.Wrong < bx0.Wrong, bx.Wrong .. " vs " .. bx0.Wrong)
+ok("BoostExplain: 5 самых трудных партий и вопросы деревьев раунда", #bx.Hard == 5 and #bx.LastStage == 4 and bx.Hard[1].P <= bx.Hard[5].P)
+ok("BoostExplain: лучший раунд на test в пределах 0..30", bx.BestTestRound >= 0 and bx.BestTestRound <= 30)
+local badRate = pcall(invoke, "BoostExplain", "Boost", { Rounds = 5, Depth = 2, Rate = 0.3 }, 3)
+ok("шаг обучения не из списка отклоняется", badRate == false)
+local zeroEval = pcall(invoke, "Evaluate", "Boost", { Rounds = 0, Depth = 2, Rate = 0.2 })
+ok("окончательная проверка бустинга с 0 раундов отклоняется", zeroEval == false)
+local r4 = invoke("Evaluate", "Boost", { Rounds = 60, Depth = 3, Rate = 0.5 })
+ok("бустинг 60×3 с шагом 0,5 проходит", r4.Success, ("acc %.3f f1 %.3f"):format(r4.Metrics.Accuracy, r4.Metrics.MacroF1))
+
+-- ── интерфейс A и B: перезапуск клиента (сервер уже открыл все уровни) ──
+local function fire(btn)
+	assert(btn, "кнопка не найдена")
+	local done = false
+	R.task.spawn(function()
+		rawget(btn, "__signals").MouseButton1Click:Fire()
+		done = true
+	end)
+	local guard = 0
+	while not done and guard < 4000 do
+		R.step(0.05)
+		guard += 1
+	end
+	R.step(0.05)
+end
+for _, name in { "Shade", "OpenLab" } do
+	local x = gui:FindFirstChild(name)
+	if x then x:Destroy() end
+end
+R.runScript(gui.DecisionTreeLabController)
+R.step(0.2)
+shade = gui:FindFirstChild("Shade")
+shade.Visible = true
+
+fire(R.button(gui, "2 · СЛУЧАЙНЫЙ ЛЕС"))
+for _, t in { "СОБРАТЬ ЛЕС И ПОКАЗАТЬ ГОЛОСА", "ВКЛ", "ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ" } do
+	ok("лес: кнопка «" .. t .. "»", R.button(gui, t) ~= nil)
+end
+fire(R.button(gui, "СОБРАТЬ ЛЕС И ПОКАЗАТЬ ГОЛОСА"))
+local trees = gui:FindFirstChild("Trees", true)
+local cards = 0
+if trees then
+	for _, c in trees:GetChildren() do
+		if c.Name:match("^Tree%d+$") then cards += 1 end
+	end
+end
+ok("лес: 5 карточек деревьев", cards == 5, cards)
+ok("лес: карточка показывает корзину и первый вопрос", text():find("Корзина: 1080 партий, разных", 1, true) ~= nil and text():find("1-й вопрос:", 1, true) ~= nil)
+ok("лес: итог голосования по партии", text():find("лес:", 1, true) ~= nil and text():find("истинный класс:", 1, true) ~= nil)
+local chart = gui:FindFirstChild("AccuracyByCount", true)
+ok("лес: столбцы точности по числу деревьев", chart ~= nil and chart:FindFirstChild("Count5", true) ~= nil)
+
+fire(R.button(gui, "ПАРТИЯ ▶"))
+ok("лес: ▶ пересчитывает голоса для партии 2", text():find("%(2 из 360%)") ~= nil, text():match("Партия[^|]*голоса[^|]*"))
+fire(R.button(gui, "ВКЛ"))
+ok("лес: переключатель случайных признаков", R.button(gui, "ВЫКЛ") ~= nil and gui:FindFirstChild("Trees", true) == nil)
+fire(R.button(gui, "ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ"))
+ok("лес: окончательная проверка по 360 партиям", metricsText():find("360 партий", 1, true) ~= nil, metricsText())
+
+
+fire(R.button(gui, "3 · ГРАДИЕНТНЫЙ БУСТИНГ"))
+ok("бустинг: раунд 0 из 60", text():find("Раунд 0 из 60", 1, true) ~= nil)
+fire(R.button(gui, "ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ"))
+ok("бустинг: проверка с 0 раундов просит обучить раунд", status():find("хотя бы один раунд", 1, true) ~= nil, status())
+fire(R.button(gui, "+1 РАУНД"))
+ok("бустинг: +1 раунд", text():find("Раунд 1 из 60", 1, true) ~= nil and gui:FindFirstChild("Probabilities", true) ~= nil)
+fire(R.button(gui, "+10"))
+ok("бустинг: +10 → раунд 11", text():find("Раунд 11 из 60", 1, true) ~= nil)
+ok("бустинг: вопросы деревьев раунда и трудные партии", text():find("Деревья раунда 11", 1, true) ~= nil and text():find("Самые трудные партии", 1, true) ~= nil)
+local overfit = gui:FindFirstChild("Overfit", true)
+ok("бустинг: точки train и test по 12 раундам", overfit ~= nil and overfit:FindFirstChild("Dot2_11", true) ~= nil and overfit:FindFirstChild("Dot2_12", true) == nil)
+for _ = 1, 5 do fire(R.button(gui, "+10")) end
+ok("бустинг: не больше 60 раундов", text():find("Раунд 60 из 60", 1, true) ~= nil)
+fire(R.button(gui, "ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ"))
+ok("бустинг: окончательная проверка по 640 партиям", metricsText():find("640 партий", 1, true) ~= nil, metricsText())
+fire(R.button(gui, "СНАЧАЛА"))
+ok("бустинг: сначала → раунд 0", text():find("Раунд 0 из 60", 1, true) ~= nil)
+
 local b = invoke("GetBatch", "Forest", nil, 360)
 ok("у леса 360 партий в test-датасете, последняя доступна", b.Total == 360 and b.Index == 360)
 

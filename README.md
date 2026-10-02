@@ -82,8 +82,9 @@ StarterPlayer/StarterPlayerScripts/RegressionClient   LocalScript: точка в
 | Скрипт | Что изменено |
 |---|---|
 | `StarterPlayerScripts/LevelFlowController` | `RegressionClient` убран из выключаемых скриптов (клумба видна с начала игры) |
-| `ServerScriptService/DecisionTreeLabService` | прогресс лаборатории не сохраняется (без DataStore); партии — все строки test-датасета уровня; окончательная проверка — весь test-датасет уровня |
-| `StarterGui/DecisionTreeLabUI/DecisionTreeLabController` | кнопки: «◀ ПАРТИЯ», «ПАРТИЯ ▶», «ПОСМОТРЕТЬ НА TEST-ДАТАСЕТЕ» (одна партия), «ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ» (весь датасет уровня); тексты «партия k из N» |
+| `ServerScriptService/DecisionTreeLabService` | прогресс лаборатории не сохраняется (без DataStore); партии — все строки test-датасета уровня; окончательная проверка — весь test-датасет уровня; новые запросы `ForestExplain`/`BoostExplain`; модели леса и бустинга кешируются на сервере |
+| `ReplicatedStorage/DecisionTreeLabMath` | трассировки обучения для наглядных режимов: `ForestTrace` (корзины, голоса, точность по числу деревьев, согласие), `BoostTrace` (вероятности и точность train/test по раундам, шаг обучения); старые функции не менялись |
+| `StarterGui/DecisionTreeLabUI/DecisionTreeLabController` | кнопки: «◀ ПАРТИЯ», «ПАРТИЯ ▶», «ПОСМОТРЕТЬ НА TEST-ДАТАСЕТЕ» (одна партия), «ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ» (весь датасет уровня); тексты «партия k из N»; вкладки «Лес голосует» и «Бустинг исправляет ошибки» (ниже) |
 | `StarterGui/DecisionTreeLabUI/TreeCriteriaGuideController` | подпись: проверка — по всему test-датасету уровня |
 | `ServerScriptService/Server/DecisionTreeLevelService` | `SAVE_PROGRESS = false` — подуровни не загружаются и не сохраняются |
 | `ServerScriptService/Server/TreeLevelZoneController` | `SAVE_PROGRESS = false` — прогресс зоны дерева не загружается и не сохраняется |
@@ -92,13 +93,29 @@ StarterPlayer/StarterPlayerScripts/RegressionClient   LocalScript: точка в
 окончательная проверка по всем партиям. Пороги прежние; на test они достижимы: дерево из подсказки «Критерии сортировщиков» —
 точность 0,953 (порог 0,95, запас маленький), лес 11×5 и бустинг 60×3 проходят (`tests/lab.luau`).
 
+### Лаборатория: «Лес голосует» и «Бустинг исправляет ошибки»
+**Лес (A).** Регуляторы: число деревьев 3–11, глубина 2–5, переключатель «случайные признаки на развилках».
+«Собрать лес и показать голоса» строит карточки деревьев: корзина (1080 партий с возвращением, сколько из них разных),
+полоса состава классов в корзине, первый вопрос дерева, его голос за выбранную партию и точность одного дерева на test.
+Над карточками — итог голосования; ниже — столбцы «точность леса из первых k деревьев» с линией порога 78% и согласие
+деревьев. С выключенными случайными признаками деревья похожи и ошибаются вместе (согласие ~0,87 против ~0,64).
+**Бустинг (B).** Регуляторы: глубина деревьев 1–3, шаг обучения 0,05 / 0,1 / 0,2 / 0,5; раунды кнопками «Сначала»,
+«−1», «+1 раунд», «+10» (до 60). Для выбранной партии — вероятности классов (истинный отмечен ★) и вероятность
+истинного класса по раундам; деревья текущего раунда (по одному на класс) и их вопросы; ошибки на обучении и пять самых
+трудных партий; точки train/test по раундам с отметкой лучшего раунда на test — видно, где начинается переобучение.
+Окончательная проверка бустинга берёт модель из текущего числа раундов (с 0 раундов — нельзя).
+◀ ▶ в подвале пересчитывают голоса/вероятности для новой партии. Модель обучается один раз на 60 раундов на сервере
+(~1,5 с), раунды дальше — срезы без переобучения.
+
 ## Перенос в Team Create
 `TransferToTeamCreate.rbxlx` — всё, что изменилось в этот раз (модуль + правленые скрипты коллег); `RegressionOnly.rbxlx` —
 только модуль. Открой файл в отдельном окне Studio, копируй объекты и вставляй в тот же родитель, **заменяя** одноимённые:
 `Workspace/RegressionLevel`, `ReplicatedStorage/Regression`, `ServerScriptService/RegressionLevelServer` (новый),
 `StarterPlayerScripts/RegressionClient`, `StarterPlayerScripts/LevelFlowController`, `ServerScriptService/DecisionTreeLabService`,
 `ServerScriptService/Server/DecisionTreeLevelService`, `ServerScriptService/Server/TreeLevelZoneController`,
-`StarterGui/DecisionTreeLabUI/DecisionTreeLabController` и `…/TreeCriteriaGuideController` (сам ScreenGui не трогай).
+`ReplicatedStorage/DecisionTreeLabMath` (ModuleScript в корне ReplicatedStorage),
+`StarterGui/DecisionTreeLabUI/DecisionTreeLabController` и `…/TreeCriteriaGuideController` (сам ScreenGui не трогай;
+в файле переноса они лежат в папке `DecisionTreeLabUI`, вставляй их внутрь ScreenGui `StarterGui/DecisionTreeLabUI`).
 
 ## Как вносить изменения
 Исходники — `src/` в раскладке Rojo (`X.luau` → ModuleScript, `X.client.luau` → LocalScript, `X.server.luau` → Script,
@@ -114,7 +131,7 @@ StarterPlayer/StarterPlayerScripts/RegressionClient   LocalScript: точка в
 ```
 luau tests/run.luau                                  # 222/222 — MathCore (160) + логика 3D (62)
 python3 tests/bundle.py && luau tests/scenario.luau  # 169/169 — путь игрока 3D → 2D → лор на моке Roblox, куб, LevelFlow, стриминг, рамки формул
-luau -O2 tests/lab.luau                              # 26/26 — лаборатория деревьев: кнопки, партии, окончательная проверка, без сохранения
+luau -O2 tests/lab.luau                              # 60/60 — лаборатория деревьев: кнопки, партии, окончательная проверка, без сохранения, «Лес голосует», «Бустинг по раундам»
 ```
 Мок (`tests/mock/Roblox.luau`) проверяет имена и типы свойств и Enum по reflection-базе rbx-dom, время в нём виртуальное.
 Он не рисует интерфейс, поэтому вёрстку (раскладка формул, глифы Σ λ ⇒ ˆ в BuilderSans, телефон) смотри в Studio.
