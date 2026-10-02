@@ -74,7 +74,7 @@ for _,rule in ipairs(rules) do
     label("Rule",row,value,UDim2.new(1,-45,1,-4),UDim2.fromOffset(42,2),13,white,false)
 end
 local note=label("Note",guide,
-    "Это учебные ориентиры. В CSV есть исключения; результат проверяется на validation.",
+    "Это учебные ориентиры. В CSV есть исключения; окончательная проверка — по всему test-датасету уровня.",
     UDim2.new(1,-20,0,55),UDim2.fromOffset(10,310),12,muted,false)
 note.TextYAlignment=Enum.TextYAlignment.Top
 

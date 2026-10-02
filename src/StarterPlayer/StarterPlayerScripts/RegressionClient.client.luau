@@ -4,9 +4,11 @@
 -- Где строить (общая карта SkRob): Workspace/RegressionLevel/FlowerbedAnchor и …/LoreAnchor
 --   (низ детали — земля; локальная +Z детали смотрит туда, откуда приходит игрок). Высота уточняется лучом вниз;
 --   если земля ещё не подгрузилась (StreamingEnabled), остаётся низ якоря.
--- Без якорей клумба ставится в 30 studs перед SpawnLocation, пасека — в 60 studs.
--- Куб уровня Workspace/RegressionLevel/RegressionZone: кнопки квестов модуля (подсказки F, HUD, пульт) работают
---   только внутри него — вне куба они выключены и не мешают другим квестам SkRob.
+-- Клумба и пасека строятся сразу при входе в игру и видны всегда. Площадки в SkRob стримятся (StreamingEnabled),
+--   поэтому их CFrame/Size берутся из атрибутов папки RegressionLevel (их ставит сервер, RegressionLevelServer) —
+--   без ожидания; если атрибутов нет — из самих деталей, а если и их нет — из Core/LevelLayout.
+-- Кнопки квестов модуля (подсказки F, HUD, пульт, экран 2D) работают, только когда уровень активен:
+--   игрок внутри куба Workspace/RegressionLevel/RegressionZone и (если в месте есть LevelFlow) ActiveLevel = "regression".
 -- Прогресс: вехи regression_3d / regression_2d / regression_lore → RemoteEvent ReplicatedStorage.Remotes.RegressionProgress.
 -- В Studio: _G.RegressionDebug.goto("2D.4") — перейти к шагу (для проверки экранов без прохождения).
 
@@ -42,6 +44,37 @@ local fb = Datasets.flowerbed
 
 -- В SkRob включён StreamingEnabled: детали-якоря могут прийти на клиент позже скрипта — ждём их
 local level = workspace:WaitForChild("RegressionLevel", 10)
+local LEVEL_PARTS = { FlowerbedAnchor = true, LoreAnchor = true, RegressionZone = true }
+
+-- Площадки и куб — служебные детали: в игре невидимы и не мешают (в том числе те, что придут стримингом позже)
+local function hideLevelPart(d: Instance)
+	if d:IsA("BasePart") and LEVEL_PARTS[d.Name] then
+		d.Transparency = 1
+		d.CanCollide, d.CanQuery, d.CanTouch = false, false, false
+	end
+end
+if level then
+	for _, d in level:GetChildren() do
+		hideLevelPart(d)
+	end
+	level.ChildAdded:Connect(hideLevelPart)
+end
+
+-- CFrame и размер площадки без ожидания стриминга: атрибуты папки → деталь → LevelLayout
+local function levelPart(name: string): (CFrame, Vector3)
+	if level then
+		local cf, size = level:GetAttribute(name .. "_CFrame"), level:GetAttribute(name .. "_Size")
+		if typeof(cf) == "CFrame" and typeof(size) == "Vector3" then
+			return cf, size
+		end
+		local part = level:FindFirstChild(name)
+		if part and part:IsA("BasePart") then
+			return part.CFrame, part.Size
+		end
+	end
+	local p = Layout.parts[name]
+	return p.cframe, p.size
+end
 local worldFolder = Instance.new("Folder")
 worldFolder.Name = "RegressionWorld"
 worldFolder.Parent = workspace
@@ -62,36 +95,19 @@ local function groundAt(pos: Vector3, fallbackY: number): number
 end
 
 -- Якорь → CFrame на земле с поворотом только вокруг вертикали
-local function findOrigin(name: string, ahead: number): CFrame
-	local anchor = (level and level:WaitForChild(name, 10)) or workspace:FindFirstChild(name, true)
-	if anchor and anchor:IsA("BasePart") then
-		local cf = anchor.CFrame * CFrame.new(0, -anchor.Size.Y / 2, 0)
-		local _, yaw, _ = cf:ToOrientation()
-		anchor.Transparency = 1
-		anchor.CanCollide = false
-		anchor.CanQuery = false
-		local p = cf.Position
-		return CFrame.new(p.X, groundAt(p, p.Y), p.Z) * CFrame.Angles(0, yaw, 0)
-	end
-	local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
-	local base = if spawn then spawn.CFrame else CFrame.new()
-	local _, yaw, _ = base:ToOrientation()
-	local flat = CFrame.new(base.Position) * CFrame.Angles(0, yaw, 0)
-	local probe = (flat * CFrame.new(0, 0, -ahead)).Position
-	return CFrame.new(probe.X, groundAt(probe, base.Position.Y), probe.Z) * CFrame.Angles(0, yaw, 0)
+local function findOrigin(name: string): CFrame
+	local acf, asize = levelPart(name)
+	local cf = acf * CFrame.new(0, -asize.Y / 2, 0)
+	local _, yaw, _ = cf:ToOrientation()
+	local p = cf.Position
+	return CFrame.new(p.X, groundAt(p, p.Y), p.Z) * CFrame.Angles(0, yaw, 0)
 end
 
-local origin = findOrigin("FlowerbedAnchor", 30)
-local loreOrigin = findOrigin("LoreAnchor", 60)
+local origin = findOrigin("FlowerbedAnchor")
+local loreOrigin = findOrigin("LoreAnchor")
 
--- Куб уровня: деталь из мира (её можно растянуть в Studio), иначе — числа из LevelLayout
-local zonePart = level and level:WaitForChild("RegressionZone", 3)
-local zoneCF, zoneSize = CFrame.new(Layout.zone.center), Layout.zone.size
-if zonePart and zonePart:IsA("BasePart") then
-	zoneCF, zoneSize = zonePart.CFrame, zonePart.Size
-	zonePart.Transparency = 1
-	zonePart.CanCollide, zonePart.CanQuery, zonePart.CanTouch = false, false, false
-end
+-- Куб уровня (его можно растянуть/повернуть в Studio)
+local zoneCF, zoneSize = levelPart("RegressionZone")
 local function insideCube(p: Vector3): boolean
 	local l = zoneCF:PointToObjectSpace(p)
 	return math.abs(l.X) <= zoneSize.X / 2 and math.abs(l.Y) <= zoneSize.Y / 2 and math.abs(l.Z) <= zoneSize.Z / 2
@@ -175,7 +191,7 @@ local controls = LineControls.new({
 	end,
 })
 
--- ───── 3a. Куб: вне него подсказки модуля недоступны ─────
+-- ───── 3a. Уровень активен (куб + LevelFlow): иначе подсказки модуля недоступны ─────
 -- Enabled подсказок ведут сцены, поэтому не трогаем его: вне куба MaxActivationDistance = 0 (исходное — в атрибуте).
 local inCube = false
 local function gatePrompt(p: ProximityPrompt)
@@ -275,11 +291,14 @@ RunService.RenderStepped:Connect(function(dt)
 	local char = player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if root then
-		local cube = insideCube(root.Position)
+		-- LevelFlow включает уровни по очереди: ActiveLevel = "regression" ставит сервер у входа в уровень.
+		-- Без LevelFlow (песочница) атрибута нет — тогда уровень активен всегда.
+		local activeLevel = player:GetAttribute("ActiveLevel")
+		local cube = insideCube(root.Position) and (activeLevel == nil or activeLevel == "regression")
 		if cube ~= inCube then
 			setCube(cube)
 			if not cube then
-				-- вышли из куба: закрыть экран 2D и режим управления прямой
+				-- вышли из куба или уровень сменился: закрыть экран 2D и режим управления прямой
 				controls:exit()
 				if shell.isOpen then
 					shell:close()

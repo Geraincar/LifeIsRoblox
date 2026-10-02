@@ -1,15 +1,17 @@
 # «Улей» · модуль «Регрессия» в SkRob
 
 Модуль обучения регрессии встроен в общий place команды **`SkRob.rbxl`** (рядом с уровнями RandomForest и кластеризации).
+Текущая `SkRob.rbxl` собрана из присланной `SkRob_vol2` + `src/` + правки скриптов коллег из `team-patches/` (см. ниже).
 Путь игрока: **3D experience** (клумба) → **2D experience** (экраны второго табло) → **лор-задача** (прогноз мёда своей пасеки).
 `RegressionBeeHive.rbxlx` — лёгкая песочница модуля (baseplate), собирается из тех же исходников.
 
 ## Быстрый старт
 1. Открой `SkRob.rbxl` в Roblox Studio → Play (F5).
 2. В Output: `Regression ИТОГО: 222/222` (автотесты ядра, только в Studio).
-3. Клумба — в ≈ 66 studs от спауна (x ≈ 62, z ≈ −28; площадка `Workspace/RegressionLevel/FlowerbedAnchor`),
-   пасека лор-задачи — в ≈ 60 studs по другую сторону (x ≈ 5, z ≈ 62; `…/LoreAnchor`). HUD модуля появляется только рядом с ними.
-   Всё это накрыто **кубом уровня** `Workspace/RegressionLevel/RegressionZone` — кнопки квестов модуля работают только внутри него (см. ниже).
+3. Клумба (x ≈ 116, z ≈ −4; площадка `Workspace/RegressionLevel/FlowerbedAnchor`) и пасека лор-задачи
+   (x ≈ 118, z ≈ 74; `…/LoreAnchor`) стоят на местах, выбранных командой, и **видны сразу при входе в игру**.
+   Кнопки модуля работают, когда уровень активен: игрок внутри **куба уровня** `…/RegressionZone` и LevelFlow
+   поставил `ActiveLevel = "regression"` (у точки входа `Workspace/LevelFlowEntries/RegressionEntry`).
 4. Отладка в Studio (командная строка, клиент): `_G.RegressionDebug.goto("2D.4")` — сразу к нужному шагу
    (`"3D.1"`…`"3D.6"`, `"2D.1"`…`"2D.7"`, `"L.0"`…`"L.5"`).
 
@@ -34,18 +36,24 @@
 | L.3–L.4 | у 5 ульев: пчёлы, поляна (расстояние), «Внести»; потом «Собрать мёд» | прогнозы 24,79 … 37,20 кг |
 | L.5 | R² своих ульев, «А если бы OLS?» | R² = 0,989; OLS: −0,78; веха `regression_lore` |
 
-## Куб уровня (RegressionZone)
-Прозрачный параллелепипед 123 × 78 × 148 studs (центр 34,5; 6; 20) накрывает клумбу, оба табло и пасеку с запасом 12 studs.
-Снаружи он не мешает другим квестам SkRob:
+## Когда кнопки модуля работают
+Клумба, табло и пасека строятся сразу при входе в игру и видны всегда — `LevelFlowController` больше не выключает
+`RegressionClient` (выключение LocalScript и повторное включение запускает его заново и строит вторую клумбу).
+Площадки в SkRob стримятся (StreamingEnabled), поэтому сервер (`ServerScriptService/RegressionLevelServer`) копирует
+их CFrame/Size в атрибуты папки `RegressionLevel` — клиент берёт их без ожидания.
+
+Кнопки модуля работают, только если уровень активен: игрок внутри куба `RegressionZone`
+(89,8 × 61,9 × 166 studs, повёрнут — как расставила команда) **и** `ActiveLevel = "regression"` (если в месте есть LevelFlow).
+Иначе модуль не мешает другим квестам SkRob:
 - подсказки F модуля (цветки, пульт, второе табло, пасечник, ульи, поляны) недоступны — у них `MaxActivationDistance = 0`
   (исходное значение хранится в атрибуте `RegDist` и возвращается при входе; `Enabled` не трогаем — им управляют сцены);
 - HUD модуля (баннер шага, «?», мёд, кнопки действий, пульт управления прямой) скрыт;
-- при выходе из куба закрываются экран 2D и режим управления прямой. Прогресс сохраняется: вернулся в куб — продолжил.
+- при выходе из куба или смене уровня закрываются экран 2D и режим управления прямой. Прогресс модуля в этой сессии сохраняется.
 
-Размер можно менять прямо в Studio (клиент берёт деталь `RegressionZone`; если её нет в месте — числа из `Core/LevelLayout`).
-Границы куба: слева не доходят до улья Data Console (x ≤ −28,7), справа далеко от `TreeLevelZone` (x ≥ 164). Спаун внутри куба.
-В кубе остаются чужие `Interactables` (TestEntity, CapabilityTerminal) — модуль на них не влияет.
-Куб задаётся в `tools/level.py` (`ZONE`); тест сверяет, что весь мир модуля внутри него и что чужие квесты снаружи.
+Площадки и куб можно двигать прямо в Studio (атрибуты обновит сервер). Чтобы сборка `tools/build_place.sh` не вернула
+их на старое место, перенеси новые CFrame/Size в `tools/level.py` (`PARTS`; значения — `rbxtool props SkRob.rbxl Workspace/RegressionLevel/<имя>`).
+Тест сверяет, что весь мир модуля внутри куба, а улей Data Console, TreeLevelZone, лаборатория деревьев и DBSCAN — снаружи.
+⚠ Куб в карте команды задевает центр зоны K-means; кнопки регрессии там не срабатывают, пока `ActiveLevel ≠ "regression"`.
 
 ## Что добавлено в SkRob (чужие объекты не изменены)
 ```
@@ -60,18 +68,43 @@ ReplicatedStorage/Regression/              весь код модуля (ModuleS
   Tests/   MathCoreSpec, LogicSpec
 ReplicatedStorage/Remotes/RegressionProgress    RemoteEvent: вехи модуля
 ServerScriptService/Server/RegressionProgress   Script: веха → LearningService.Complete (как у других уроков)
+ServerScriptService/RegressionLevelServer       Script: CFrame/Size площадок → атрибуты папки RegressionLevel (против стриминга)
 ServerScriptService/RegressionTests             Script: автотесты при запуске в Studio
 StarterPlayer/StarterPlayerScripts/RegressionClient   LocalScript: точка входа
 ```
 Всё обучение идёт на клиенте (клумба, табло, экраны, пасека — локальные объекты игрока). Сервер получает только вехи
 `regression_3d`, `regression_2d`, `regression_lore`. HUD модуля стоит слева сверху (справа — HUD тайкуна SkRob) и
-виден только у клумбы/пасеки. В SkRob включён StreamingEnabled — клиент ждёт якоря через `WaitForChild`.
+виден только у клумбы/пасеки. Рамки формул на экранах 2D фиксированного размера: строки постоянной высоты, числа с запасом
+ширины — при изменении значений рамки не «дышат».
+
+## Правки скриптов коллег (`team-patches/`)
+Исходники из `SkRob_vol2` лежат первым коммитом, мои правки — отдельным (их видно в `git diff`/истории):
+| Скрипт | Что изменено |
+|---|---|
+| `StarterPlayerScripts/LevelFlowController` | `RegressionClient` убран из выключаемых скриптов (клумба видна с начала игры) |
+| `ServerScriptService/DecisionTreeLabService` | прогресс лаборатории не сохраняется (без DataStore); партии — все строки test-датасета уровня; окончательная проверка — весь test-датасет уровня |
+| `StarterGui/DecisionTreeLabUI/DecisionTreeLabController` | кнопки: «◀ ПАРТИЯ», «ПАРТИЯ ▶», «ПОСМОТРЕТЬ НА TEST-ДАТАСЕТЕ» (одна партия), «ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ» (весь датасет уровня); тексты «партия k из N» |
+| `StarterGui/DecisionTreeLabUI/TreeCriteriaGuideController` | подпись: проверка — по всему test-датасету уровня |
+| `ServerScriptService/Server/DecisionTreeLevelService` | `SAVE_PROGRESS = false` — подуровни не загружаются и не сохраняются |
+| `ServerScriptService/Server/TreeLevelZoneController` | `SAVE_PROGRESS = false` — прогресс зоны дерева не загружается и не сохраняется |
+
+Партия урожая — **одна строка** test-датасета уровня (дерево 64, лес 360, бустинг 640 партий). Уровень открывает только
+окончательная проверка по всем партиям. Пороги прежние; на test они достижимы: дерево из подсказки «Критерии сортировщиков» —
+точность 0,953 (порог 0,95, запас маленький), лес 11×5 и бустинг 60×3 проходят (`tests/lab.luau`).
+
+## Перенос в Team Create
+`TransferToTeamCreate.rbxlx` — всё, что изменилось в этот раз (модуль + правленые скрипты коллег); `RegressionOnly.rbxlx` —
+только модуль. Открой файл в отдельном окне Studio, копируй объекты и вставляй в тот же родитель, **заменяя** одноимённые:
+`Workspace/RegressionLevel`, `ReplicatedStorage/Regression`, `ServerScriptService/RegressionLevelServer` (новый),
+`StarterPlayerScripts/RegressionClient`, `StarterPlayerScripts/LevelFlowController`, `ServerScriptService/DecisionTreeLabService`,
+`ServerScriptService/Server/DecisionTreeLevelService`, `ServerScriptService/Server/TreeLevelZoneController`,
+`StarterGui/DecisionTreeLabUI/DecisionTreeLabController` и `…/TreeCriteriaGuideController` (сам ScreenGui не трогай).
 
 ## Как вносить изменения
 Исходники — `src/` в раскладке Rojo (`X.luau` → ModuleScript, `X.client.luau` → LocalScript, `X.server.luau` → Script,
 `X.rbxmx` → модель). После правок:
 ```
-./tools/build_place.sh        # влить src/ в SkRob.rbxl и RegressionBeeHive.rbxlx (нужен Rust: собирает tools/rbxtool)
+./tools/build_place.sh        # SkRob.rbxl ← src/ + team-patches/; RegressionBeeHive.rbxlx ← src/ (нужен Rust: собирает tools/rbxtool)
 ```
 `tools/rbxtool` — утилита на rbx-dom (те же библиотеки, что у Rojo): `tree`, `export`, `sync`, `dumpall` и др. —
 список в начале `tools/rbxtool/src/main.rs`. Папка `ReplicatedStorage/Regression` пересобирается начисто, остальное
@@ -80,7 +113,8 @@ StarterPlayer/StarterPlayerScripts/RegressionClient   LocalScript: точка в
 ## Проверка вне Studio
 ```
 luau tests/run.luau                                  # 222/222 — MathCore (160) + логика 3D (62)
-python3 tests/bundle.py && luau tests/scenario.luau  # 156/156 — сквозной путь игрока 3D → 2D → лор на моке Roblox, плюс куб уровня
+python3 tests/bundle.py && luau tests/scenario.luau  # 169/169 — путь игрока 3D → 2D → лор на моке Roblox, куб, LevelFlow, стриминг, рамки формул
+luau -O2 tests/lab.luau                              # 26/26 — лаборатория деревьев: кнопки, партии, окончательная проверка, без сохранения
 ```
 Мок (`tests/mock/Roblox.luau`) проверяет имена и типы свойств и Enum по reflection-базе rbx-dom, время в нём виртуальное.
 Он не рисует интерфейс, поэтому вёрстку (раскладка формул, глифы Σ λ ⇒ ˆ в BuilderSans, телефон) смотри в Studio.

@@ -1,3 +1,4 @@
 tools/rbxtool/target/
 tests/_bundle.luau
+tests/_bundle_team.luau
 __pycache__/

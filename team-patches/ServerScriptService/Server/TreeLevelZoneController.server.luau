@@ -110,6 +110,9 @@ local progressStore =
 		"TreeLevelProgress_v1"
 	)
 
+-- Прогресс уровня НЕ сохраняется между заходами: новый заход — с подуровня 0 (загрузка и сохранение выключены).
+local SAVE_PROGRESS = false
+
 --------------------------------------------------
 -- RUNTIME
 --------------------------------------------------
@@ -148,6 +151,11 @@ local function saveValue(
 	player,
 	value
 )
+
+	if not SAVE_PROGRESS then
+		lastSaved[player] = value
+		return true
+	end
 
 	local success, savedValue =
 		pcall(function()
@@ -215,6 +223,11 @@ local function saveDebugValue(
 
 	if not RunService:IsStudio() then
 		return false
+	end
+
+	if not SAVE_PROGRESS then
+		lastSaved[player] = math.clamp(math.floor(value), 0, MAX_SUBLEVEL)
+		return true
 	end
 
 	value =
@@ -340,15 +353,19 @@ local function loadPlayer(player)
 	local value =
 		0
 
-	local success, savedValue =
-		pcall(function()
+	local success, savedValue = true, nil
 
-			return
-			progressStore:GetAsync(
-				getKey(player)
-			)
+	if SAVE_PROGRESS then
+		success, savedValue =
+			pcall(function()
 
-		end)
+				return
+				progressStore:GetAsync(
+					getKey(player)
+				)
+
+			end)
+	end
 
 	if success then
 

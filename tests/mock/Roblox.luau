@@ -423,6 +423,24 @@ local Font = {
 	new = plain("Font", { "Family", "Weight", "Style" }),
 	fromEnum = plain("Font", { "Enum" }),
 }
+-- Random: детерминированный ГПСЧ (Парка — Миллера); числа не как в Roblox, но воспроизводимы
+local Random = {
+	new = function(seed)
+		local s = math.floor(seed or 1) % 2147483647
+		if s <= 0 then s += 2147483646 end
+		local r = {}
+		function r:NextInteger(a, b)
+			s = (s * 48271) % 2147483647
+			return a + s % (b - a + 1)
+		end
+		function r:NextNumber(a, b)
+			s = (s * 48271) % 2147483647
+			local u = s / 2147483647
+			return (a or 0) + u * ((b or 1) - (a or 0))
+		end
+		return mark(r, "Random")
+	end,
+}
 local RaycastParams = {
 	new = function()
 		return mark({ FilterType = nil, FilterDescendantsInstances = {}, IgnoreWater = false }, "RaycastParams")
@@ -557,6 +575,7 @@ local EVENTS = {
 	InputBegan = true, InputEnded = true, InputChanged = true, Completed = true, Touched = true, TouchEnded = true,
 	FocusLost = true, Focused = true, OnClientEvent = true, OnServerEvent = true, Event = true,
 	CharacterAdded = true, CharacterRemoving = true, Died = true, MoveToFinished = true,
+	PlayerAdded = true, PlayerRemoving = true,
 }
 
 local Instance = {}
@@ -634,6 +653,13 @@ IMT.__newindex = function(self, k, v)
 	local extra = rawget(self, "__extra")
 	if extra and extra[k] ~= nil then
 		extra[k] = v
+		return
+	end
+	-- колбэки RemoteFunction/BindableFunction — не свойства
+	if k == "OnServerInvoke" or k == "OnClientInvoke" or k == "OnInvoke" then
+		local cb = rawget(self, "__callbacks") or {}
+		rawset(self, "__callbacks", cb)
+		cb[k] = v
 		return
 	end
 	local spec = propsOf(cls).props
@@ -814,6 +840,12 @@ function methods.FireServer(self, ...)
 	table.insert(log, table.pack(...))
 end
 function methods.FireClient() end
+-- RemoteFunction: клиент и сервер в одном процессе мока — вызов идёт напрямую в OnServerInvoke
+function methods.InvokeServer(self, ...)
+	local cb = rawget(self, "__callbacks")
+	assert(cb and cb.OnServerInvoke, "InvokeServer: на сервере нет OnServerInvoke у " .. self:GetFullName())
+	return cb.OnServerInvoke(M.player, ...)
+end
 function methods.FireAllClients() end
 function methods.Play(self) end
 
@@ -979,6 +1011,7 @@ playerScripts.Parent = localPlayer
 function methods.GetMouse() return { Hit = CFrame.identity, Target = nil, X = 0, Y = 0 } end
 
 service("ReplicatedStorage", {})
+service("ServerStorage", {})
 service("ServerScriptService", {})
 service("StarterPlayer", {})
 service("StarterGui", { SetCore = function() end, GetCore = function() return nil end })
@@ -988,6 +1021,10 @@ service("ProximityPromptService", { PromptTriggered = Signal.new("PromptTriggere
 service("CollectionService", { GetTagged = function() return {} end, AddTag = function() end, HasTag = function() return false end })
 service("Debris", { AddItem = function() end })
 service("GuiService", { GetGuiInset = function() return Vector2.new(0, 58), Vector2.zero end })
+-- ширина текста — грубая оценка (0,55 em на символ), для логики фиксированных размеров её хватает
+service("TextService", { GetTextSize = function(_, text, size, font, frame)
+	return Vector2.new(utf8.len(text) * size * 0.55, size)
+end })
 service("HttpService", { JSONEncode = function() return "{}" end, GenerateGUID = function() return "guid" end })
 
 rawset(game, "__extra", {
@@ -1031,7 +1068,7 @@ env = setmetatable({
 	UDim = UDim, UDim2 = UDim2, Enum = Enum, TweenInfo = TweenInfo, NumberRange = NumberRange,
 	NumberSequence = NumberSequence, ColorSequence = ColorSequence, NumberSequenceKeypoint = NumberSequenceKeypoint,
 	ColorSequenceKeypoint = ColorSequenceKeypoint, Rect = Rect, Ray = Ray, Font = Font, RaycastParams = RaycastParams,
-	task = task, typeof = typeof_, require = requireModule, os = fakeOs, tick = function() return now end,
+	task = task, typeof = typeof_, require = requireModule, Random = Random, os = fakeOs, tick = function() return now end,
 	time = function() return now end, wait = task.wait, delay = task.delay, spawn = task.spawn,
 	warn = function(...) print("WARN", ...) end,
 	_G = {}, shared = {},

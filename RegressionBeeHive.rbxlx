@@ -70,18 +70,18 @@
           <string name="Name">FlowerbedAnchor</string>
           <bool name="Anchored">true</bool>
           <CoordinateFrame name="CFrame">
-            <X>62</X>
-            <Y>-30.0758</Y>
-            <Z>-28</Z>
-            <R00>0.450243</R00>
+            <X>115.64024</X>
+            <Y>-30.075768</Y>
+            <Z>-4.472183</Z>
+            <R00>0.7071072</R00>
             <R01>0</R01>
-            <R02>-0.892906</R02>
+            <R02>-0.70710653</R02>
             <R10>0</R10>
             <R11>1</R11>
             <R12>0</R12>
-            <R20>0.892906</R20>
+            <R20>0.70710653</R20>
             <R21>0</R21>
-            <R22>0.450243</R22>
+            <R22>0.7071072</R22>
           </CoordinateFrame>
           <bool name="CanCollide">false</bool>
           <bool name="CanQuery">false</bool>
@@ -102,18 +102,18 @@
           <string name="Name">LoreAnchor</string>
           <bool name="Anchored">true</bool>
           <CoordinateFrame name="CFrame">
-            <X>5</X>
-            <Y>-30.0758</Y>
-            <Z>62</Z>
-            <R00>-0.999504</R00>
+            <X>118.48942</X>
+            <Y>-30.075768</Y>
+            <Z>73.57159</Z>
+            <R00>-0.7071064</R00>
             <R01>0</R01>
-            <R02>-0.031493</R02>
+            <R02>-0.70710725</R02>
             <R10>0</R10>
             <R11>1</R11>
             <R12>0</R12>
-            <R20>0.031493</R20>
+            <R20>0.70710725</R20>
             <R21>0</R21>
-            <R22>-0.999504</R22>
+            <R22>-0.7071064</R22>
           </CoordinateFrame>
           <bool name="CanCollide">false</bool>
           <bool name="CanQuery">false</bool>
@@ -134,29 +134,29 @@
           <string name="Name">RegressionZone</string>
           <bool name="Anchored">true</bool>
           <CoordinateFrame name="CFrame">
-            <X>34.5</X>
-            <Y>6</Y>
-            <Z>20</Z>
-            <R00>1</R00>
+            <X>114.435646</X>
+            <Y>-12.134401</Y>
+            <Z>35.826294</Z>
+            <R00>0.97657514</R00>
             <R01>0</R01>
-            <R02>-0</R02>
+            <R02>0.21517709</R02>
             <R10>0</R10>
             <R11>1</R11>
             <R12>0</R12>
-            <R20>0</R20>
+            <R20>-0.21517709</R20>
             <R21>0</R21>
-            <R22>1</R22>
+            <R22>0.97657514</R22>
           </CoordinateFrame>
           <bool name="CanCollide">false</bool>
           <bool name="CanQuery">false</bool>
           <bool name="CanTouch">false</bool>
           <bool name="CastShadow">false</bool>
           <Color3uint8 name="Color3uint8">5682409</Color3uint8>
-          <bool name="Locked">true</bool>
+          <bool name="Locked">false</bool>
           <Vector3 name="size">
-            <X>123</X>
-            <Y>78</Y>
-            <Z>148</Z>
+            <X>89.78053</X>
+            <Y>61.882736</Y>
+            <Z>165.9553</Z>
           </Vector3>
           <float name="Transparency">0.92</float>
         </Properties>
@@ -392,15 +392,16 @@ return Format
           <Properties>
             <string name="Name">LevelLayout</string>
             <string name="Source"><![CDATA[-- Сгенерировано tools/level.py. Не редактировать.
--- Площадки модуля «Регрессия» в мире SkRob и куб уровня (RegressionZone).
+-- Площадки модуля «Регрессия» и куб уровня (RegressionZone) — как в общей карте SkRob.
+-- Клиент берёт детали из Workspace/RegressionLevel; эти числа — запасной вариант и основа тестов.
 return {
-	groundY = -30.5758,
-	spawn = Vector3.new(3.1, -30.5758, 1.7),
-	anchors = {
-		{ name = "FlowerbedAnchor", x = 62.0, z = -28.0, size = Vector3.new(20, 1, 12) },
-		{ name = "LoreAnchor", x = 5.0, z = 62.0, size = Vector3.new(40, 1, 44) },
+	groundY = -30.575768,
+	spawn = Vector3.new(41.965675, -30.575768, 1.0869448),
+	parts = {
+		FlowerbedAnchor = { cframe = CFrame.new(115.64024, -30.075768, -4.472183, 0.7071072, 0.0, -0.70710653, 0.0, 1.0, 0.0, 0.70710653, 0.0, 0.7071072), size = Vector3.new(20.0, 1.0, 12.0) },
+		LoreAnchor = { cframe = CFrame.new(118.48942, -30.075768, 73.57159, -0.7071064, 0.0, -0.70710725, 0.0, 1.0, 0.0, 0.70710725, 0.0, -0.7071064), size = Vector3.new(40.0, 1.0, 44.0) },
+		RegressionZone = { cframe = CFrame.new(114.435646, -12.134401, 35.826294, 0.97657514, 0.0, 0.21517709, 0.0, 1.0, 0.0, -0.21517709, 0.0, 0.97657514), size = Vector3.new(89.78053, 61.882736, 165.9553) },
 	},
-	zone = { center = Vector3.new(34.5, 6.0, 20.0), size = Vector3.new(123.0, 78.0, 148.0) },
 }
 ]]></string>
           </Properties>
@@ -5322,6 +5323,9 @@ return Drag
 --   Строки раскрываются по одной: закрытая строка — «🔒 подсказка», открытие ≤ 0,4 с.
 --   Токен с bind ↔ объект: наведение/тап ставит store.highlight = bind; подсвеченный токен получает фон цвета объекта.
 --   Обновление чисел не пересоздаёт Instance, если структура формулы не изменилась.
+--   Размеры фиксированные, чтобы рамки не «дышали» при изменении чисел: у строки постоянная высота
+--   (выше — только если в ней дробь), у токена с цифрами ширина берётся с запасом и только растёт,
+--   масштаб длинной строки пересчитывается лишь при смене структуры формулы или ширины панели.
 --
 --   local T = FormulaView.T
 --   local fv = FormulaView.new(parent, {
@@ -5334,6 +5338,7 @@ return Drag
 --   fv:unlock("deriv"); fv:refresh(state); fv:snapshot() → { title, lines = { "строка", ... } }
 
 local TweenService = game:GetService("TweenService")
+local TextService = game:GetService("TextService")
 
 local Regression = script.Parent.Parent
 local Theme = require(Regression.UI.Theme)
@@ -5395,6 +5400,39 @@ local function colorOf(name: string?): Color3
 end
 
 -- ───── построение ─────
+
+local function textWidth(text: string, size: number, font: Enum.Font): number
+	if text == "" then
+		return 0
+	end
+	return math.ceil(TextService:GetTextSize(text, size, font, Vector2.new(10000, 1000)).X) + 2
+end
+
+-- Запас для чисел: все цифры как «0», плюс знак и ещё одна цифра — тогда рамка почти никогда не растёт
+local function reserveText(text: string): string
+	if not text:find("%d") then
+		return text
+	end
+	local r = text:gsub("%d", "0")
+	if not r:find("\u{2212}") and not r:find("^%s*%-") then
+		r = "\u{2212}" .. r
+	end
+	return r .. "0"
+end
+
+local function hasFrac(tokens): boolean
+	for _, t in tokens or {} do
+		if type(t) == "table" then
+			if t.k == "frac" then
+				return true
+			end
+			if (t.k == "sub" or t.k == "sup") and type(t.base) == "table" and hasFrac({ t.base }) then
+				return true
+			end
+		end
+	end
+	return false
+end
 
 local function signature(tokens): string
 	local parts = {}
@@ -5480,8 +5518,15 @@ function FormulaView:setLayer(layer: string)
 end
 
 function FormulaView:_buildRow(line, order: number)
-	local row = Gui.frame({ Name = "Line_" .. line.id, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = order, Parent = self.root })
+	-- высота строки фиксированная: одна строка текста или две (если в формуле есть дробь)
+	local general = if type(line.general) == "table" then line.general else nil
+	if not general and type(line.general) == "function" then
+		local ok, res = pcall(line.general, self.state)
+		general = if ok then res else nil
+	end
+	local h = self:_rowHeight(hasFrac(general))
+	local row = Gui.frame({ Name = "Line_" .. line.id, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, h),
+		LayoutOrder = order, Parent = self.root })
 	-- тап по строке — смена слоя (кнопка поверх, под токенами)
 	local tap = Gui.make("TextButton", { Text = "", BackgroundTransparency = 1, AutoButtonColor = false, Size = UDim2.fromScale(1, 1),
 		ZIndex = 1, Parent = row })
@@ -5489,23 +5534,28 @@ function FormulaView:_buildRow(line, order: number)
 		self:setLayer(if self.layer == "numbers" then "general" else "numbers")
 	end)
 	local content = Gui.frame({ Name = "Content", BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 0),
+		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.fromScale(0, 0.5),
 		AutomaticSize = Enum.AutomaticSize.XY, ZIndex = 2, Parent = row })
 	Gui.make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center,
 		SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 1), Parent = content })
 	local scale = Gui.make("UIScale", { Scale = 1, Parent = content })
-	local lock = Gui.label({ Name = "Locked", Size = UDim2.new(1, 0, 0, self.size + 6), TextSize = self.size - 4,
+	local lock = Gui.label({ Name = "Locked", Size = UDim2.fromScale(1, 1), TextSize = self.size - 4,
 		TextColor3 = Theme.color.textDim, Visible = false, ZIndex = 2, Parent = row })
-	local r = { line = line, frame = row, content = content, scale = scale, lock = lock, leaves = {}, sig = nil }
-	-- длинная строка ужимается под ширину панели
-	local function fit()
+	local r = { line = line, frame = row, content = content, scale = scale, lock = lock, leaves = {}, sig = nil, h = h }
+	-- длинная строка ужимается под ширину панели; пересчёт — только при новой структуре или ширине панели,
+	-- а не при каждом изменении чисел (иначе строка «дышит»)
+	function r.fit()
 		local avail = row.AbsoluteSize.X
 		local w = content.AbsoluteSize.X / math.max(scale.Scale, 0.01)
 		scale.Scale = if w > 1 and avail > 1 then math.clamp(avail / w, 0.55, 1) else 1
 	end
-	table.insert(self.conns, content:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit))
-	table.insert(self.conns, row:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit))
+	table.insert(self.conns, row:GetPropertyChangedSignal("AbsoluteSize"):Connect(r.fit))
 	self.rows[line.id] = r
 	self.rows[order] = r
+end
+
+function FormulaView:_rowHeight(tall: boolean): number
+	return if tall then 2 * (self.size + 8) + 4 else self.size + 10
 end
 
 -- Лист: TextLabel / TextButton (если есть bind)
@@ -5513,10 +5563,12 @@ function FormulaView:_leaf(parent: Instance, text: string, opts): TextLabel
 	opts = opts or {}
 	local size = opts.size or self.size
 	local cls = if opts.bind then "TextButton" else "TextLabel"
+	local font = opts.font or Theme.fontMedium
+	-- ширина фиксированная (с запасом для чисел), без AutomaticSize — иначе соседние токены прыгают
 	local l = Gui.make(cls, {
 		BackgroundTransparency = 1, BackgroundColor3 = colorOf(opts.color), BorderSizePixel = 0,
-		Size = UDim2.fromOffset(0, opts.height or (size + 8)), AutomaticSize = Enum.AutomaticSize.X,
-		Font = opts.font or Theme.fontMedium, TextSize = size, TextColor3 = colorOf(opts.color), Text = text,
+		Size = UDim2.fromOffset(textWidth(reserveText(text), size, font), opts.height or (size + 8)),
+		Font = font, TextSize = size, TextColor3 = colorOf(opts.color), Text = text,
 		RichText = false, TextXAlignment = Enum.TextXAlignment.Center, LayoutOrder = opts.order or 0, ZIndex = 3, Parent = parent,
 	})
 	if cls == "TextButton" then
@@ -5652,10 +5704,20 @@ function FormulaView:refresh(s)
 		local sig = signature(tokens)
 		if sig == r.sig then
 			local texts = leafTexts(tokens, {})
+			local grew = false
 			for k, l in r.leaves do
 				if texts[k] and l.Text ~= texts[k] then
 					l.Text = texts[k]
+					-- ширина только растёт (редко: запас уже заложен), никогда не сжимается
+					local need = textWidth(texts[k], l.TextSize, l.Font)
+					if need > l.Size.X.Offset then
+						l.Size = UDim2.fromOffset(need, l.Size.Y.Offset)
+						grew = true
+					end
 				end
+			end
+			if grew then
+				task.defer(r.fit)
 			end
 		else
 			for _, c in r.content:GetChildren() do
@@ -5673,6 +5735,13 @@ function FormulaView:refresh(s)
 			r.leaves = {}
 			self:_build(r.content, tokens, r.leaves)
 			r.sig = sig
+			-- высота строки только растёт (дробь появилась в слое «с числами»)
+			local need = self:_rowHeight(hasFrac(tokens))
+			if need > r.h then
+				r.h = need
+				r.frame.Size = UDim2.new(1, 0, 0, need)
+			end
+			task.defer(r.fit)
 			self:_paintHighlight(self.store and self.store:get("highlight"))
 		end
 	end
@@ -9164,16 +9233,43 @@ end)
         </Properties>
       </Item>
     </Item>
+    <Item class="Script" referent="64">
+      <Properties>
+        <string name="Name">RegressionLevelServer</string>
+        <string name="Source"><![CDATA[-- RegressionLevelServer: копирует CFrame и Size площадок уровня «Регрессия» в атрибуты папки
+-- Workspace/RegressionLevel. В SkRob включён StreamingEnabled: сами детали приходят клиенту не сразу,
+-- а атрибуты папки — сразу, поэтому клумба и пасека строятся на своих местах в первый же кадр.
+-- Двигать площадки и куб можно прямо в Studio — атрибуты обновятся при запуске.
+local level = workspace:WaitForChild("RegressionLevel")
+
+local function publish(part: Instance)
+	if part:IsA("BasePart") then
+		level:SetAttribute(part.Name .. "_CFrame", part.CFrame)
+		level:SetAttribute(part.Name .. "_Size", part.Size)
+	end
+end
+
+for _, child in level:GetChildren() do
+	publish(child)
+	if child:IsA("BasePart") then
+		child:GetPropertyChangedSignal("CFrame"):Connect(function() publish(child) end)
+		child:GetPropertyChangedSignal("Size"):Connect(function() publish(child) end)
+	end
+end
+level.ChildAdded:Connect(publish)
+]]></string>
+      </Properties>
+    </Item>
   </Item>
-  <Item class="StarterPlayer" referent="64">
+  <Item class="StarterPlayer" referent="65">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="65">
+    <Item class="StarterPlayerScripts" referent="66">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="66">
+      <Item class="LocalScript" referent="67">
         <Properties>
           <string name="Name">RegressionClient</string>
           <bool name="Disabled">false</bool>
@@ -9183,9 +9279,11 @@ end)
 -- Где строить (общая карта SkRob): Workspace/RegressionLevel/FlowerbedAnchor и …/LoreAnchor
 --   (низ детали — земля; локальная +Z детали смотрит туда, откуда приходит игрок). Высота уточняется лучом вниз;
 --   если земля ещё не подгрузилась (StreamingEnabled), остаётся низ якоря.
--- Без якорей клумба ставится в 30 studs перед SpawnLocation, пасека — в 60 studs.
--- Куб уровня Workspace/RegressionLevel/RegressionZone: кнопки квестов модуля (подсказки F, HUD, пульт) работают
---   только внутри него — вне куба они выключены и не мешают другим квестам SkRob.
+-- Клумба и пасека строятся сразу при входе в игру и видны всегда. Площадки в SkRob стримятся (StreamingEnabled),
+--   поэтому их CFrame/Size берутся из атрибутов папки RegressionLevel (их ставит сервер, RegressionLevelServer) —
+--   без ожидания; если атрибутов нет — из самих деталей, а если и их нет — из Core/LevelLayout.
+-- Кнопки квестов модуля (подсказки F, HUD, пульт, экран 2D) работают, только когда уровень активен:
+--   игрок внутри куба Workspace/RegressionLevel/RegressionZone и (если в месте есть LevelFlow) ActiveLevel = "regression".
 -- Прогресс: вехи regression_3d / regression_2d / regression_lore → RemoteEvent ReplicatedStorage.Remotes.RegressionProgress.
 -- В Studio: _G.RegressionDebug.goto("2D.4") — перейти к шагу (для проверки экранов без прохождения).
 
@@ -9221,6 +9319,37 @@ local fb = Datasets.flowerbed
 
 -- В SkRob включён StreamingEnabled: детали-якоря могут прийти на клиент позже скрипта — ждём их
 local level = workspace:WaitForChild("RegressionLevel", 10)
+local LEVEL_PARTS = { FlowerbedAnchor = true, LoreAnchor = true, RegressionZone = true }
+
+-- Площадки и куб — служебные детали: в игре невидимы и не мешают (в том числе те, что придут стримингом позже)
+local function hideLevelPart(d: Instance)
+	if d:IsA("BasePart") and LEVEL_PARTS[d.Name] then
+		d.Transparency = 1
+		d.CanCollide, d.CanQuery, d.CanTouch = false, false, false
+	end
+end
+if level then
+	for _, d in level:GetChildren() do
+		hideLevelPart(d)
+	end
+	level.ChildAdded:Connect(hideLevelPart)
+end
+
+-- CFrame и размер площадки без ожидания стриминга: атрибуты папки → деталь → LevelLayout
+local function levelPart(name: string): (CFrame, Vector3)
+	if level then
+		local cf, size = level:GetAttribute(name .. "_CFrame"), level:GetAttribute(name .. "_Size")
+		if typeof(cf) == "CFrame" and typeof(size) == "Vector3" then
+			return cf, size
+		end
+		local part = level:FindFirstChild(name)
+		if part and part:IsA("BasePart") then
+			return part.CFrame, part.Size
+		end
+	end
+	local p = Layout.parts[name]
+	return p.cframe, p.size
+end
 local worldFolder = Instance.new("Folder")
 worldFolder.Name = "RegressionWorld"
 worldFolder.Parent = workspace
@@ -9241,36 +9370,19 @@ local function groundAt(pos: Vector3, fallbackY: number): number
 end
 
 -- Якорь → CFrame на земле с поворотом только вокруг вертикали
-local function findOrigin(name: string, ahead: number): CFrame
-	local anchor = (level and level:WaitForChild(name, 10)) or workspace:FindFirstChild(name, true)
-	if anchor and anchor:IsA("BasePart") then
-		local cf = anchor.CFrame * CFrame.new(0, -anchor.Size.Y / 2, 0)
-		local _, yaw, _ = cf:ToOrientation()
-		anchor.Transparency = 1
-		anchor.CanCollide = false
-		anchor.CanQuery = false
-		local p = cf.Position
-		return CFrame.new(p.X, groundAt(p, p.Y), p.Z) * CFrame.Angles(0, yaw, 0)
-	end
-	local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
-	local base = if spawn then spawn.CFrame else CFrame.new()
-	local _, yaw, _ = base:ToOrientation()
-	local flat = CFrame.new(base.Position) * CFrame.Angles(0, yaw, 0)
-	local probe = (flat * CFrame.new(0, 0, -ahead)).Position
-	return CFrame.new(probe.X, groundAt(probe, base.Position.Y), probe.Z) * CFrame.Angles(0, yaw, 0)
+local function findOrigin(name: string): CFrame
+	local acf, asize = levelPart(name)
+	local cf = acf * CFrame.new(0, -asize.Y / 2, 0)
+	local _, yaw, _ = cf:ToOrientation()
+	local p = cf.Position
+	return CFrame.new(p.X, groundAt(p, p.Y), p.Z) * CFrame.Angles(0, yaw, 0)
 end
 
-local origin = findOrigin("FlowerbedAnchor", 30)
-local loreOrigin = findOrigin("LoreAnchor", 60)
+local origin = findOrigin("FlowerbedAnchor")
+local loreOrigin = findOrigin("LoreAnchor")
 
--- Куб уровня: деталь из мира (её можно растянуть в Studio), иначе — числа из LevelLayout
-local zonePart = level and level:WaitForChild("RegressionZone", 3)
-local zoneCF, zoneSize = CFrame.new(Layout.zone.center), Layout.zone.size
-if zonePart and zonePart:IsA("BasePart") then
-	zoneCF, zoneSize = zonePart.CFrame, zonePart.Size
-	zonePart.Transparency = 1
-	zonePart.CanCollide, zonePart.CanQuery, zonePart.CanTouch = false, false, false
-end
+-- Куб уровня (его можно растянуть/повернуть в Studio)
+local zoneCF, zoneSize = levelPart("RegressionZone")
 local function insideCube(p: Vector3): boolean
 	local l = zoneCF:PointToObjectSpace(p)
 	return math.abs(l.X) <= zoneSize.X / 2 and math.abs(l.Y) <= zoneSize.Y / 2 and math.abs(l.Z) <= zoneSize.Z / 2
@@ -9354,7 +9466,7 @@ local controls = LineControls.new({
 	end,
 })
 
--- ───── 3a. Куб: вне него подсказки модуля недоступны ─────
+-- ───── 3a. Уровень активен (куб + LevelFlow): иначе подсказки модуля недоступны ─────
 -- Enabled подсказок ведут сцены, поэтому не трогаем его: вне куба MaxActivationDistance = 0 (исходное — в атрибуте).
 local inCube = false
 local function gatePrompt(p: ProximityPrompt)
@@ -9454,11 +9566,14 @@ RunService.RenderStepped:Connect(function(dt)
 	local char = player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if root then
-		local cube = insideCube(root.Position)
+		-- LevelFlow включает уровни по очереди: ActiveLevel = "regression" ставит сервер у входа в уровень.
+		-- Без LevelFlow (песочница) атрибута нет — тогда уровень активен всегда.
+		local activeLevel = player:GetAttribute("ActiveLevel")
+		local cube = insideCube(root.Position) and (activeLevel == nil or activeLevel == "regression")
 		if cube ~= inCube then
 			setCube(cube)
 			if not cube then
-				-- вышли из куба: закрыть экран 2D и режим управления прямой
+				-- вышли из куба или уровень сменился: закрыть экран 2D и режим управления прямой
 				controls:exit()
 				if shell.isOpen then
 					shell:close()

@@ -4,6 +4,9 @@
 --   Строки раскрываются по одной: закрытая строка — «🔒 подсказка», открытие ≤ 0,4 с.
 --   Токен с bind ↔ объект: наведение/тап ставит store.highlight = bind; подсвеченный токен получает фон цвета объекта.
 --   Обновление чисел не пересоздаёт Instance, если структура формулы не изменилась.
+--   Размеры фиксированные, чтобы рамки не «дышали» при изменении чисел: у строки постоянная высота
+--   (выше — только если в ней дробь), у токена с цифрами ширина берётся с запасом и только растёт,
+--   масштаб длинной строки пересчитывается лишь при смене структуры формулы или ширины панели.
 --
 --   local T = FormulaView.T
 --   local fv = FormulaView.new(parent, {
@@ -16,6 +19,7 @@
 --   fv:unlock("deriv"); fv:refresh(state); fv:snapshot() → { title, lines = { "строка", ... } }
 
 local TweenService = game:GetService("TweenService")
+local TextService = game:GetService("TextService")
 
 local Regression = script.Parent.Parent
 local Theme = require(Regression.UI.Theme)
@@ -77,6 +81,39 @@ local function colorOf(name: string?): Color3
 end
 
 -- ───── построение ─────
+
+local function textWidth(text: string, size: number, font: Enum.Font): number
+	if text == "" then
+		return 0
+	end
+	return math.ceil(TextService:GetTextSize(text, size, font, Vector2.new(10000, 1000)).X) + 2
+end
+
+-- Запас для чисел: все цифры как «0», плюс знак и ещё одна цифра — тогда рамка почти никогда не растёт
+local function reserveText(text: string): string
+	if not text:find("%d") then
+		return text
+	end
+	local r = text:gsub("%d", "0")
+	if not r:find("\u{2212}") and not r:find("^%s*%-") then
+		r = "\u{2212}" .. r
+	end
+	return r .. "0"
+end
+
+local function hasFrac(tokens): boolean
+	for _, t in tokens or {} do
+		if type(t) == "table" then
+			if t.k == "frac" then
+				return true
+			end
+			if (t.k == "sub" or t.k == "sup") and type(t.base) == "table" and hasFrac({ t.base }) then
+				return true
+			end
+		end
+	end
+	return false
+end
 
 local function signature(tokens): string
 	local parts = {}
@@ -162,8 +199,15 @@ function FormulaView:setLayer(layer: string)
 end
 
 function FormulaView:_buildRow(line, order: number)
-	local row = Gui.frame({ Name = "Line_" .. line.id, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = order, Parent = self.root })
+	-- высота строки фиксированная: одна строка текста или две (если в формуле есть дробь)
+	local general = if type(line.general) == "table" then line.general else nil
+	if not general and type(line.general) == "function" then
+		local ok, res = pcall(line.general, self.state)
+		general = if ok then res else nil
+	end
+	local h = self:_rowHeight(hasFrac(general))
+	local row = Gui.frame({ Name = "Line_" .. line.id, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, h),
+		LayoutOrder = order, Parent = self.root })
 	-- тап по строке — смена слоя (кнопка поверх, под токенами)
 	local tap = Gui.make("TextButton", { Text = "", BackgroundTransparency = 1, AutoButtonColor = false, Size = UDim2.fromScale(1, 1),
 		ZIndex = 1, Parent = row })
@@ -171,23 +215,28 @@ function FormulaView:_buildRow(line, order: number)
 		self:setLayer(if self.layer == "numbers" then "general" else "numbers")
 	end)
 	local content = Gui.frame({ Name = "Content", BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 0),
+		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.fromScale(0, 0.5),
 		AutomaticSize = Enum.AutomaticSize.XY, ZIndex = 2, Parent = row })
 	Gui.make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center,
 		SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 1), Parent = content })
 	local scale = Gui.make("UIScale", { Scale = 1, Parent = content })
-	local lock = Gui.label({ Name = "Locked", Size = UDim2.new(1, 0, 0, self.size + 6), TextSize = self.size - 4,
+	local lock = Gui.label({ Name = "Locked", Size = UDim2.fromScale(1, 1), TextSize = self.size - 4,
 		TextColor3 = Theme.color.textDim, Visible = false, ZIndex = 2, Parent = row })
-	local r = { line = line, frame = row, content = content, scale = scale, lock = lock, leaves = {}, sig = nil }
-	-- длинная строка ужимается под ширину панели
-	local function fit()
+	local r = { line = line, frame = row, content = content, scale = scale, lock = lock, leaves = {}, sig = nil, h = h }
+	-- длинная строка ужимается под ширину панели; пересчёт — только при новой структуре или ширине панели,
+	-- а не при каждом изменении чисел (иначе строка «дышит»)
+	function r.fit()
 		local avail = row.AbsoluteSize.X
 		local w = content.AbsoluteSize.X / math.max(scale.Scale, 0.01)
 		scale.Scale = if w > 1 and avail > 1 then math.clamp(avail / w, 0.55, 1) else 1
 	end
-	table.insert(self.conns, content:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit))
-	table.insert(self.conns, row:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit))
+	table.insert(self.conns, row:GetPropertyChangedSignal("AbsoluteSize"):Connect(r.fit))
 	self.rows[line.id] = r
 	self.rows[order] = r
+end
+
+function FormulaView:_rowHeight(tall: boolean): number
+	return if tall then 2 * (self.size + 8) + 4 else self.size + 10
 end
 
 -- Лист: TextLabel / TextButton (если есть bind)
@@ -195,10 +244,12 @@ function FormulaView:_leaf(parent: Instance, text: string, opts): TextLabel
 	opts = opts or {}
 	local size = opts.size or self.size
 	local cls = if opts.bind then "TextButton" else "TextLabel"
+	local font = opts.font or Theme.fontMedium
+	-- ширина фиксированная (с запасом для чисел), без AutomaticSize — иначе соседние токены прыгают
 	local l = Gui.make(cls, {
 		BackgroundTransparency = 1, BackgroundColor3 = colorOf(opts.color), BorderSizePixel = 0,
-		Size = UDim2.fromOffset(0, opts.height or (size + 8)), AutomaticSize = Enum.AutomaticSize.X,
-		Font = opts.font or Theme.fontMedium, TextSize = size, TextColor3 = colorOf(opts.color), Text = text,
+		Size = UDim2.fromOffset(textWidth(reserveText(text), size, font), opts.height or (size + 8)),
+		Font = font, TextSize = size, TextColor3 = colorOf(opts.color), Text = text,
 		RichText = false, TextXAlignment = Enum.TextXAlignment.Center, LayoutOrder = opts.order or 0, ZIndex = 3, Parent = parent,
 	})
 	if cls == "TextButton" then
@@ -334,10 +385,20 @@ function FormulaView:refresh(s)
 		local sig = signature(tokens)
 		if sig == r.sig then
 			local texts = leafTexts(tokens, {})
+			local grew = false
 			for k, l in r.leaves do
 				if texts[k] and l.Text ~= texts[k] then
 					l.Text = texts[k]
+					-- ширина только растёт (редко: запас уже заложен), никогда не сжимается
+					local need = textWidth(texts[k], l.TextSize, l.Font)
+					if need > l.Size.X.Offset then
+						l.Size = UDim2.fromOffset(need, l.Size.Y.Offset)
+						grew = true
+					end
 				end
+			end
+			if grew then
+				task.defer(r.fit)
 			end
 		else
 			for _, c in r.content:GetChildren() do
@@ -355,6 +416,13 @@ function FormulaView:refresh(s)
 			r.leaves = {}
 			self:_build(r.content, tokens, r.leaves)
 			r.sig = sig
+			-- высота строки только растёт (дробь появилась в слое «с числами»)
+			local need = self:_rowHeight(hasFrac(tokens))
+			if need > r.h then
+				r.h = need
+				r.frame.Size = UDim2.new(1, 0, 0, need)
+			end
+			task.defer(r.fit)
 			self:_paintHighlight(self.store and self.store:get("highlight"))
 		end
 	end

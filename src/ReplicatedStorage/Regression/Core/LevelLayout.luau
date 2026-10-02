@@ -1,11 +1,12 @@
 -- Сгенерировано tools/level.py. Не редактировать.
--- Площадки модуля «Регрессия» в мире SkRob и куб уровня (RegressionZone).
+-- Площадки модуля «Регрессия» и куб уровня (RegressionZone) — как в общей карте SkRob.
+-- Клиент берёт детали из Workspace/RegressionLevel; эти числа — запасной вариант и основа тестов.
 return {
-	groundY = -30.5758,
-	spawn = Vector3.new(3.1, -30.5758, 1.7),
-	anchors = {
-		{ name = "FlowerbedAnchor", x = 62.0, z = -28.0, size = Vector3.new(20, 1, 12) },
-		{ name = "LoreAnchor", x = 5.0, z = 62.0, size = Vector3.new(40, 1, 44) },
+	groundY = -30.575768,
+	spawn = Vector3.new(41.965675, -30.575768, 1.0869448),
+	parts = {
+		FlowerbedAnchor = { cframe = CFrame.new(115.64024, -30.075768, -4.472183, 0.7071072, 0.0, -0.70710653, 0.0, 1.0, 0.0, 0.70710653, 0.0, 0.7071072), size = Vector3.new(20.0, 1.0, 12.0) },
+		LoreAnchor = { cframe = CFrame.new(118.48942, -30.075768, 73.57159, -0.7071064, 0.0, -0.70710725, 0.0, 1.0, 0.0, 0.70710725, 0.0, -0.7071064), size = Vector3.new(40.0, 1.0, 44.0) },
+		RegressionZone = { cframe = CFrame.new(114.435646, -12.134401, 35.826294, 0.97657514, 0.0, 0.21517709, 0.0, 1.0, 0.0, -0.21517709, 0.0, 0.97657514), size = Vector3.new(89.78053, 61.882736, 165.9553) },
 	},
-	zone = { center = Vector3.new(34.5, 6.0, 20.0), size = Vector3.new(123.0, 78.0, 148.0) },
 }

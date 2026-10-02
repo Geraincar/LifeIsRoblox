@@ -150,6 +150,9 @@ local progressStore =
 		"DecisionTreeSublevel_v1"
 	)
 
+-- Прогресс уровня НЕ сохраняется между заходами: новый заход — с начала (загрузка и сохранение выключены).
+local SAVE_PROGRESS = false
+
 --------------------------------------------------
 -- RUNTIME
 --------------------------------------------------
@@ -1159,21 +1162,25 @@ local function loadPlayer(player)
 	local state =
 		newState()
 
-	local success, saved =
-		pcall(function()
+	local success, saved = true, nil
 
-			return progressStore:GetAsync(
-				playerKey(player)
-			)
+	if SAVE_PROGRESS then
+		success, saved =
+			pcall(function()
 
-		end)
+				return progressStore:GetAsync(
+					playerKey(player)
+				)
 
-	if success then
+			end)
+	end
+
+	if success and SAVE_PROGRESS then
 
 		state =
 			sanitizeState(saved)
 
-	else
+	elseif SAVE_PROGRESS then
 
 		warn(
 			"[DecisionTree] Could not load progress for",
@@ -1199,6 +1206,10 @@ end
 --------------------------------------------------
 
 local function savePlayer(player)
+
+	if not SAVE_PROGRESS then
+		return
+	end
 
 	local state =
 		states[player]
@@ -1276,6 +1287,10 @@ local function saveExactPlayerState(player)
 
 	if not state then
 		return false
+	end
+
+	if not SAVE_PROGRESS then
+		return true
 	end
 
 	local snapshot = {

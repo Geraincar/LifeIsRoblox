@@ -1,41 +1,38 @@
 """Генерирует объекты уровня «Регрессия» для общего мира SkRob (Rojo-совместимые .rbxmx в src/):
-  src/Workspace/RegressionLevel.rbxmx              — Folder с якорями FlowerbedAnchor и LoreAnchor
+  src/Workspace/RegressionLevel.rbxmx                    — Folder: FlowerbedAnchor, LoreAnchor, RegressionZone (куб уровня)
   src/ReplicatedStorage/Remotes/RegressionProgress.rbxmx — RemoteEvent вех прогресса
-  src/ReplicatedStorage/Regression/Core/LevelLayout.luau — те же координаты для клиента и тестов
-  (в RegressionLevel.rbxmx добавлена деталь RegressionZone — куб уровня)
-Площадки выбраны по свободному месту на карте SkRob рядом со спауном (земля — «Texture Part», верх на y = −30,58).
-Локальная +Z якоря смотрит на спаун: игрок подходит к клумбе со стороны пульта, к пасеке — со стороны пасечника.
+  src/ReplicatedStorage/Regression/Core/LevelLayout.luau — те же координаты для клиента (запасной вариант) и тестов
+Координаты — как их расставила команда в общей карте (SkRob_vol2): площадки и куб повёрнуты вручную, поэтому
+здесь хранится полный CFrame (позиция + матрица поворота по строкам), а не «направление на спаун».
+Если в Studio передвинули площадку или куб — перенеси сюда их CFrame/Size (rbxtool props <place> Workspace/RegressionLevel/<имя>).
 Использование: python3 tools/level.py
 """
-import math, os
+import os
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GROUND_Y = -30.5758
-SPAWN = (3.1, 1.7)
-# Куб уровня «Регрессия»: накрывает клумбу, оба табло и пасеку с запасом 12 studs.
-# Кнопки квестов модуля (подсказки F, HUD, пульт) работают только внутри него.
-# Границы по x: слева — до улья другого квеста (x ≤ −28,7), справа — далеко от TreeLevelZone (x ≥ 164).
-# Если меняешь клумбу/пасеку — проверь размер: тест tests/scenario.luau сверяет, что весь мир модуля внутри куба.
-ZONE = {"center": (34.5, 6.0, 20.0), "size": (123.0, 78.0, 148.0)}
-ANCHORS = [
-    # имя, центр (x, z), размер (x, y, z), цвет
-    ("FlowerbedAnchor", (62.0, -28.0), (20, 1, 12), (255, 170, 0)),
-    ("LoreAnchor", (5.0, 62.0), (40, 1, 44), (106, 191, 89)),
+GROUND_Y = -30.575768
+SPAWN = (41.965675, GROUND_Y, 1.0869448)
+
+# имя, позиция, матрица поворота (строки R0x, R1x, R2x), размер, цвет, прозрачность в Studio, Locked
+PARTS = [
+    ("FlowerbedAnchor", (115.64024, -30.075768, -4.472183),
+     ((0.7071072, 0.0, -0.70710653), (0.0, 1.0, 0.0), (0.70710653, 0.0, 0.7071072)),
+     (20.0, 1.0, 12.0), (255, 170, 0), 0.7, False),
+    ("LoreAnchor", (118.48942, -30.075768, 73.57159),
+     ((-0.7071064, 0.0, -0.70710725), (0.0, 1.0, 0.0), (0.70710725, 0.0, -0.7071064)),
+     (40.0, 1.0, 44.0), (106, 191, 89), 0.7, False),
+    # Куб уровня: кнопки квестов модуля (подсказки F, HUD, пульт) работают только внутри него.
+    ("RegressionZone", (114.435646, -12.134401, 35.826294),
+     ((0.97657514, 0.0, 0.21517709), (0.0, 1.0, 0.0), (-0.21517709, 0.0, 0.97657514)),
+     (89.78053, 61.882736, 165.9553), (86, 180, 233), 0.92, False),
 ]
 
 
-def cframe(x, y, z, look):
-    # CFrame.lookAt(pos, pos + look): −Z = look, Y — вверх
-    lx, lz = look
-    n = math.hypot(lx, lz)
-    lx, lz = lx / n, lz / n
-    zx, zz = -lx, -lz          # ось Z
-    rx, rz = zz, -zx           # ось X = Y × Z
-    r = [[rx, 0, zx], [0, 1, 0], [rz, 0, zz]]
+def cframe_xml(pos, rot):
     names = ["R00", "R01", "R02", "R10", "R11", "R12", "R20", "R21", "R22"]
-    vals = [r[i][j] for i in range(3) for j in range(3)]
-    body = "".join(f"<{k}>{v:.6f}</{k}>" for k, v in zip(names, vals))
-    return f'<CoordinateFrame name="CFrame"><X>{x}</X><Y>{y}</Y><Z>{z}</Z>{body}</CoordinateFrame>'
+    vals = [rot[i][j] for i in range(3) for j in range(3)]
+    body = "".join(f"<{k}>{v}</{k}>" for k, v in zip(names, vals))
+    return f'<CoordinateFrame name="CFrame"><X>{pos[0]}</X><Y>{pos[1]}</Y><Z>{pos[2]}</Z>{body}</CoordinateFrame>'
 
 
 def color(r, g, b):
@@ -43,24 +40,13 @@ def color(r, g, b):
 
 
 items = []
-for i, (name, (x, z), size, col) in enumerate(ANCHORS):
-    look = (x - SPAWN[0], z - SPAWN[1])  # −Z — от спауна, +Z — к спауну
+for i, (name, pos, rot, size, col, tr, locked) in enumerate(PARTS):
     items.append(f'''<Item class="Part" referent="RBX{i + 2}"><Properties>
 <string name="Name">{name}</string><bool name="Anchored">true</bool><bool name="CanCollide">false</bool>
-<bool name="CanQuery">false</bool><bool name="CanTouch">false</bool><bool name="CastShadow">false</bool><bool name="Locked">false</bool>
+<bool name="CanQuery">false</bool><bool name="CanTouch">false</bool><bool name="CastShadow">false</bool><bool name="Locked">{"true" if locked else "false"}</bool>
 <Vector3 name="size"><X>{size[0]}</X><Y>{size[1]}</Y><Z>{size[2]}</Z></Vector3>
-{cframe(x, GROUND_Y + size[1] / 2, z, look)}
-<Color3uint8 name="Color3uint8">{color(*col)}</Color3uint8><float name="Transparency">0.7</float>
-</Properties></Item>''')
-
-zx, zy, zz = ZONE["center"]
-zsx, zsy, zsz = ZONE["size"]
-items.append(f'''<Item class="Part" referent="RBX9"><Properties>
-<string name="Name">RegressionZone</string><bool name="Anchored">true</bool><bool name="CanCollide">false</bool>
-<bool name="CanQuery">false</bool><bool name="CanTouch">false</bool><bool name="CastShadow">false</bool><bool name="Locked">true</bool>
-<Vector3 name="size"><X>{zsx}</X><Y>{zsy}</Y><Z>{zsz}</Z></Vector3>
-{cframe(zx, zy, zz, (0, -1))}
-<Color3uint8 name="Color3uint8">{color(86, 180, 233)}</Color3uint8><float name="Transparency">0.92</float>
+{cframe_xml(pos, rot)}
+<Color3uint8 name="Color3uint8">{color(*col)}</Color3uint8><float name="Transparency">{tr}</float>
 </Properties></Item>''')
 
 level = f'''<roblox version="4"><Item class="Folder" referent="RBX1"><Properties><string name="Name">RegressionLevel</string></Properties>
@@ -71,15 +57,24 @@ open(os.path.join(root, "src", "Workspace", "RegressionLevel.rbxmx"), "w", encod
 remote = '''<roblox version="4"><Item class="RemoteEvent" referent="RBX1"><Properties><string name="Name">RegressionProgress</string></Properties></Item></roblox>
 '''
 open(os.path.join(root, "src", "ReplicatedStorage", "Remotes", "RegressionProgress.rbxmx"), "w", encoding="utf-8").write(remote)
-# Те же числа — в Luau: клиент берёт куб из детали RegressionZone, а если её нет в месте — отсюда; тесты строят мир по ним
+
+
+def lua_cf(pos, rot):
+    vals = [pos[0], pos[1], pos[2]] + [rot[i][j] for i in range(3) for j in range(3)]
+    return "CFrame.new(" + ", ".join(repr(v) for v in vals) + ")"
+
+
+rows = []
+for name, pos, rot, size, *_ in PARTS:
+    rows.append(f'\t\t{name} = {{ cframe = {lua_cf(pos, rot)}, size = Vector3.new({size[0]}, {size[1]}, {size[2]}) }},\n')
 layout = f"""-- Сгенерировано tools/level.py. Не редактировать.
--- Площадки модуля «Регрессия» в мире SkRob и куб уровня (RegressionZone).
+-- Площадки модуля «Регрессия» и куб уровня (RegressionZone) — как в общей карте SkRob.
+-- Клиент берёт детали из Workspace/RegressionLevel; эти числа — запасной вариант и основа тестов.
 return {{
 	groundY = {GROUND_Y},
-	spawn = Vector3.new({SPAWN[0]}, {GROUND_Y}, {SPAWN[1]}),
-	anchors = {{
-{"".join(f'		{{ name = "{n}", x = {x}, z = {z}, size = Vector3.new({sz[0]}, {sz[1]}, {sz[2]}) }},' + chr(10) for n, (x, z), sz, _ in ANCHORS)}	}},
-	zone = {{ center = Vector3.new({zx}, {zy}, {zz}), size = Vector3.new({zsx}, {zsy}, {zsz}) }},
+	spawn = Vector3.new({SPAWN[0]}, {SPAWN[1]}, {SPAWN[2]}),
+	parts = {{
+{"".join(rows)}	}},
 }}
 """
 open(os.path.join(root, "src", "ReplicatedStorage", "Regression", "Core", "LevelLayout.luau"), "w", encoding="utf-8").write(layout)

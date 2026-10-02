@@ -22,10 +22,11 @@ local tab="Tree"
 local unlocked=1
 local persistent=false
 local sampleIndex=1
+local batchTotal=20 -- сколько партий в test-датасете уровня (сервер присылает Total)
 local batch
 local metric
 local success=false
-local status="Построй дерево: выбери лист, добавь развилку и настрой обе ветви."
+local status="Построй дерево: выбери лист, добавь развилку и настрой обе ветви. Потом пройди окончательную проверку на всём test-датасете уровня."
 local statusColor=muted
 local forestCount,forestDepth=5,3
 local boostRounds,boostDepth=20,2
@@ -108,7 +109,7 @@ alternate.Visible=false; alternate.Parent=main
 local alternateLayout=Instance.new("UIListLayout")
 alternateLayout.Padding=UDim.new(0,10); alternateLayout.SortOrder=Enum.SortOrder.LayoutOrder
 alternateLayout.Parent=alternate
-label("BatchTitle",sidebar,"ПАРТИЯ / ДАННЫЕ",UDim2.new(1,-26,0,29),UDim2.fromOffset(14,12),16,warm,true)
+label("BatchTitle",sidebar,"ПАРТИЯ УРОЖАЯ (1 строка test-датасета)",UDim2.new(1,-26,0,29),UDim2.fromOffset(14,12),16,warm,true)
 local batchText=label("BatchText",sidebar,"",UDim2.new(1,-28,0,240),UDim2.fromOffset(14,48),14,white,false)
 batchText.TextYAlignment=Enum.TextYAlignment.Top
 local metricsText=label("Metrics",sidebar,"",UDim2.new(1,-28,0,190),UDim2.fromOffset(14,290),14,white,false)
@@ -126,7 +127,7 @@ for i,item in ipairs(tabDefs) do
         end
         tab=item[1]; sampleIndex=1; metric=nil; success=false
         local value=request("GetBatch",tab,nil,sampleIndex)
-        if value then batch=value end
+        if value then batch=value; batchTotal=value.Total or batchTotal end
         status="Уровень "..i.." открыт."
         statusColor=muted
         renderMain(); renderPanels()
@@ -352,8 +353,9 @@ local function configuration()
     if tab=="Forest" then return {Count=forestCount,Depth=forestDepth} end
     return {Rounds=boostRounds,Depth=boostDepth}
 end
+-- «Пройти окончательную проверку»: сервер прогоняет модель по ВСЕМ партиям test-датасета уровня
 local function evaluate()
-    status="Сервер оценивает модель на validation..."
+    status="Окончательная проверка: модель сортирует все "..batchTotal.." партий test-датасета уровня..."
     statusColor=muted; renderPanels()
     local result=request("Evaluate",tab,configuration())
     if not result then return end
@@ -362,10 +364,10 @@ local function evaluate()
     unlocked=result.Unlocked
     persistent=result.Persistent
     if success then
-        status="SUCCESS — уровень пройден! "..(unlocked<=3 and "Следующий уровень открыт." or "Все уровни пройдены.")
+        status="SUCCESS — окончательная проверка пройдена на всех "..metric.Total.." партиях! "..(unlocked<=3 and "Следующий уровень открыт." or "Все уровни пройдены.")
         statusColor=green
     else
-        status="Пока не пройдено. Измени модель и повтори проверку."
+        status="Окончательная проверка не пройдена ("..metric.Total.." партий). Измени модель и повтори."
         statusColor=Color3.fromRGB(243,180,78)
     end
     renderPanels()
@@ -382,32 +384,40 @@ local function showBeacon(letter)
     highlight.Parent=beacon
     task.delay(2,function() if highlight.Parent then highlight:Destroy() end end)
 end
+-- «Посмотреть на test-датасете»: прогноз модели для ОДНОЙ выбранной партии (одной строки датасета)
 local function simulate()
-    status="Сортировка партии..."
+    status="Модель сортирует партию "..sampleIndex.." из "..batchTotal.."..."
     statusColor=muted; renderPanels()
     local result=request("Simulate",tab,configuration(),sampleIndex)
     if not result then return end
     local verdict=result.Guess==result.Actual and "верно" or "ошибка"
-    status="Партия "..result.Id..": маршрут "..result.Guess.."; истинный класс "..result.Actual.." — "..verdict.."."
+    status="Партия "..result.Id.." ("..sampleIndex.." из "..batchTotal.."): маршрут "..result.Guess.."; истинный класс "..result.Actual.." — "..verdict..
+        ".\nЭто одна партия — одна строка датасета. Чтобы пройти уровень, нужна окончательная проверка по всем "..batchTotal.." партиям."
     statusColor=result.Guess==result.Actual and green or Color3.fromRGB(243,180,78)
     showBeacon(result.Guess)
     renderPanels()
 end
-button("Evaluate",footer,"ПРОВЕРИТЬ VALIDATION",UDim2.new(0.37,-10,0,40),UDim2.fromOffset(10,9),
-    Color3.fromRGB(196,139,34),dark,evaluate)
-button("Simulate",footer,"СОРТИРОВАТЬ ПАРТИЮ",UDim2.new(0.39,-10,0,40),UDim2.new(0.37,5,0,9),
+-- Подвал: ◀ ▶ — листать партии урожая test-датасета; «Посмотреть» — прогноз для одной партии;
+-- «Окончательная проверка» — все партии test-датасета уровня (только она открывает следующий уровень).
+local function stepBatch(delta)
+    sampleIndex=(sampleIndex-1+delta)%batchTotal+1
+    local value=request("GetBatch",tab,nil,sampleIndex)
+    if value then
+        batch=value
+        batchTotal=value.Total or batchTotal
+        status="Партия "..value.Id.." ("..sampleIndex.." из "..batchTotal.."). Истинный класс скрыт, пока модель её не отсортирует."
+        statusColor=muted
+        renderPanels()
+    end
+end
+button("Prev",footer,"◀ ПАРТИЯ",UDim2.new(0.13,-10,0,40),UDim2.fromOffset(10,9),
+    Color3.fromRGB(74,80,90),white,function() stepBatch(-1) end)
+button("Next",footer,"ПАРТИЯ ▶",UDim2.new(0.13,-10,0,40),UDim2.new(0.13,5,0,9),
+    Color3.fromRGB(74,80,90),white,function() stepBatch(1) end)
+button("Simulate",footer,"ПОСМОТРЕТЬ НА TEST-ДАТАСЕТЕ",UDim2.new(0.34,-10,0,40),UDim2.new(0.26,0,0,9),
     Color3.fromRGB(97,114,84),white,simulate)
-button("Next",footer,"СЛЕДУЮЩАЯ →",UDim2.new(0.24,-15,0,40),UDim2.new(0.76,0,0,9),
-    Color3.fromRGB(74,80,90),white,function()
-        sampleIndex=sampleIndex%20+1
-        local value=request("GetBatch",tab,nil,sampleIndex)
-        if value then
-            batch=value
-            status="Выбрана партия "..value.Id..". Истинный класс скрыт до сортировки."
-            statusColor=muted
-            renderPanels()
-        end
-    end)
+button("Evaluate",footer,"ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ",UDim2.new(0.40,-10,0,40),UDim2.new(0.60,0,0,9),
+    Color3.fromRGB(196,139,34),dark,evaluate)
 
 renderMain=function()
     local isTree=tab=="Tree"
@@ -432,9 +442,9 @@ renderMain=function()
         end)
         local row=frame("Train",alternate,UDim2.new(1,-12,0,64),UDim2.fromOffset(0,0),dark,9)
         row.LayoutOrder=#alternate:GetChildren()+1
-        button("Start",row,"ОБУЧИТЬ ЛЕС И ПРОВЕРИТЬ",UDim2.new(1,-24,0,42),UDim2.fromOffset(12,11),
+        button("Start",row,"ОБУЧИТЬ ЛЕС И ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ",UDim2.new(1,-24,0,42),UDim2.fromOffset(12,11),
             Color3.fromRGB(196,139,34),dark,evaluate)
-        alternateLine("Для SUCCESS нужны точность ≥78% и Macro-F1 ≥0,75 на 360 validation-партиях. Увеличение глубины и числа деревьев расходует больше вычислений.",83,muted,false)
+        alternateLine("Для SUCCESS нужны точность ≥78% и Macro-F1 ≥0,75 на всём test-датасете уровня ("..batchTotal.." партий). Увеличение глубины и числа деревьев расходует больше вычислений.",83,muted,false)
     else
         alternateLine("3 / ГРАДИЕНТНЫЙ БУСТИНГ",52,warm,true)
         alternateLine("Настоящий многоклассовый gradient boosting: небольшие регрессионные деревья последовательно исправляют ошибки вероятностей классов. Источник — отдельный CSV из 3200 партий.",94,white,false)
@@ -450,9 +460,9 @@ renderMain=function()
         end)
         local row=frame("Train",alternate,UDim2.new(1,-12,0,64),UDim2.fromOffset(0,0),dark,9)
         row.LayoutOrder=#alternate:GetChildren()+1
-        button("Start",row,"ОБУЧИТЬ БУСТИНГ И ПРОВЕРИТЬ",UDim2.new(1,-24,0,42),UDim2.fromOffset(12,11),
+        button("Start",row,"ОБУЧИТЬ БУСТИНГ И ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ",UDim2.new(1,-24,0,42),UDim2.fromOffset(12,11),
             Color3.fromRGB(196,139,34),dark,evaluate)
-        alternateLine("Для SUCCESS нужны точность ≥70% и Macro-F1 ≥0,65 на 640 validation-партиях. Больше этапов требуют больше вычислений.",80,muted,false)
+        alternateLine("Для SUCCESS нужны точность ≥70% и Macro-F1 ≥0,65 на всём test-датасете уровня ("..batchTotal.." партий). Больше этапов требуют больше вычислений.",80,muted,false)
     end
 end
 renderPanels=function()
@@ -466,23 +476,24 @@ renderPanels=function()
     end
     if batch then
         local f=batch.Features
-        batchText.Text=string.format("ID: %s  ·  test\n\nВода             %.2f%%\nСахар           %.2f%%\nКислотность   %.3f\nВязкость        %.3f\nТемпература %.2f°C\nАромат           %.3f\nЦвет               %.3f\nПыльца            %.3f",
-            batch.Id,f[1],f[2],f[3],f[4],f[5],f[6],f[7],f[8])
+        batchText.Text=string.format("Партия %d из %d · ID %s\n(одна строка test-датасета)\n\nВода             %.2f%%\nСахар           %.2f%%\nКислотность   %.3f\nВязкость        %.3f\nТемпература %.2f°C\nАромат           %.3f\nЦвет               %.3f\nПыльца            %.3f",
+            sampleIndex,batchTotal,batch.Id,f[1],f[2],f[3],f[4],f[5],f[6],f[7],f[8])
     end
     if metric then
-        metricsText.Text=string.format("VALIDATION · %d партий\nТочность: %.1f%% (%d/%d)\nMacro-F1: %.3f\n\nF1: A %.2f · B %.2f\n     C %.2f · D %.2f",
+        metricsText.Text=string.format("ОКОНЧАТЕЛЬНАЯ ПРОВЕРКА\nвесь test-датасет уровня · %d партий\nТочность: %.1f%% (%d/%d)\nMacro-F1: %.3f\n\nF1: A %.2f · B %.2f\n     C %.2f · D %.2f",
             metric.Total,metric.Accuracy*100,metric.Correct,metric.Total,
             metric.MacroF1,metric.ByClass[1],metric.ByClass[2],metric.ByClass[3],metric.ByClass[4])
     else
-        metricsText.Text="VALIDATION\n\nНажми «Проверить», чтобы увидеть точность и Macro-F1."
+        metricsText.Text="ОКОНЧАТЕЛЬНАЯ ПРОВЕРКА\n\nНажми «Пройти окончательную проверку»: модель отсортирует все "..batchTotal.." партий test-датасета уровня."
     end
-    statusText.Text=status..(persistent and "" or "\n\nВ Studio сохранение может быть недоступно; сейчас прогресс временный.")
-    statusText.Text=status..(persistent and "" or "\n\nСохранение сейчас недоступно; прогресс только на эту сессию.")
+    -- прогресс лаборатории намеренно не сохраняется между заходами
+    statusText.Text=status
     statusText.TextColor3=statusColor
 end
 local initial=request("GetState")
 if initial then unlocked=initial.Unlocked; persistent=initial.Persistent end
 batch=request("GetBatch","Tree",nil,1)
+if batch then batchTotal=batch.Total or batchTotal end
 renderMain(); renderPanels()
 local openButton=button("OpenLab",gui,"ЛАБОРАТОРИЯ ДЕРЕВЬЕВ",UDim2.fromOffset(255,45),
     UDim2.new(0,18,1,-62),Color3.fromRGB(205,146,35),dark,function() shade.Visible=true end)

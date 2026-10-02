@@ -132,7 +132,8 @@ fn main() {
             }
             for svc in fs::read_dir(&a[3]).unwrap() { let p = svc.unwrap().path(); if !p.is_dir() { continue; }
                 let n = p.file_name().unwrap().to_string_lossy().to_string();
-                let r = find_child(&d, root, &n).unwrap_or_else(|| panic!("service {} missing", n));
+                // сервиса нет в месте (например, StarterGui в песочнице) — создаём
+                let r = match find_child(&d, root, &n) { Some(r) => r, None => d.insert(root, InstanceBuilder::new(n.as_str()).with_name(&n)) };
                 sync(&mut d, r, &p); }
             save(&d, &a[4]); }
         "parts" => { let d = load(&a[2]); let mut stack = vec![(d.root_ref(), String::new())];

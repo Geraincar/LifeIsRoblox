@@ -9174,8 +9174,3206 @@ end)
 ]]></string>
         </Properties>
       </Item>
+      <Item class="Script" referent="62">
+        <Properties>
+          <string name="Name">DecisionTreeLevelService</string>
+          <string name="Source">warn("========== DECISION TREE SERVICE STARTED ==========")
+local Players =
+	game:GetService("Players")
+
+local DataStoreService =
+	game:GetService("DataStoreService")
+
+local ReplicatedStorage =
+	game:GetService("ReplicatedStorage")
+
+--------------------------------------------------
+-- CONFIG
+--------------------------------------------------
+
+local Config =
+	require(
+		ReplicatedStorage
+		:WaitForChild("Shared")
+		:WaitForChild("DecisionTreeConfig")
+	)
+
+--------------------------------------------------
+-- REMOTE
+--------------------------------------------------
+
+local remotes =
+	ReplicatedStorage
+	:WaitForChild("Remotes")
+
+local rpc =
+	remotes
+	:WaitForChild(
+		"DecisionTreeLevelRPC"
+	)
+
+--------------------------------------------------
+-- TREE
+--------------------------------------------------
+
+local tree =
+	workspace
+	:WaitForChild("DecisionTree")
+
+local layer1 =
+	tree:WaitForChild("Layer1")
+
+local layer2 =
+	tree:WaitForChild("Layer2")
+
+local layer3 =
+	tree:WaitForChild("Layer3")
+
+--------------------------------------------------
+-- FLOORS
+--------------------------------------------------
+
+local floors = {
+
+	Root =
+		layer1
+		:WaitForChild(
+			"RootNodeFloor"
+		),
+
+	Left =
+		layer2
+		:WaitForChild(
+			"LeftConditionNodeFloor"
+		),
+
+	Right =
+		layer2
+		:WaitForChild(
+			"RightConditionNodeFloor"
+		),
+
+	ClassA =
+		layer3
+		:WaitForChild(
+			"ClassAFloor"
+		),
+
+	ClassB =
+		layer3
+		:WaitForChild(
+			"ClassBFloor"
+		),
+
+	ClassC =
+		layer3
+		:WaitForChild(
+			"ClassCFloor"
+		),
+
+	ClassD =
+		layer3
+		:WaitForChild(
+			"ClassDFloor"
+		),
+}
+
+--------------------------------------------------
+-- NODE GEOMETRY
+--------------------------------------------------
+
+local NODE_GEOMETRY = {
+
+	Root = {
+		Layer = layer1,
+		Prefix = "RootNode",
+	},
+
+	Left = {
+		Layer = layer2,
+		Prefix = "LeftConditionNode",
+	},
+
+	Right = {
+		Layer = layer2,
+		Prefix = "RightConditionNode",
+	},
+
+	ClassA = {
+		Layer = layer3,
+		Prefix = "ClassA",
+	},
+
+	ClassB = {
+		Layer = layer3,
+		Prefix = "ClassB",
+	},
+
+	ClassC = {
+		Layer = layer3,
+		Prefix = "ClassC",
+	},
+
+	ClassD = {
+		Layer = layer3,
+		Prefix = "ClassD",
+	},
+}
+
+--------------------------------------------------
+-- DATASTORE
+--------------------------------------------------
+
+local progressStore =
+	DataStoreService:GetDataStore(
+		"DecisionTreeSublevel_v1"
+	)
+
+-- Прогресс уровня НЕ сохраняется между заходами: новый заход — с начала (загрузка и сохранение выключены).
+local SAVE_PROGRESS = false
+
+--------------------------------------------------
+-- RUNTIME
+--------------------------------------------------
+
+local states = {}
+local heldObjects = {}
+
+local dirty = {}
+local saveScheduled = {}
+
+local partByNode = {
+
+	Root = {},
+	Left = {},
+	Right = {},
+
+	ClassA = {},
+	ClassB = {},
+	ClassC = {},
+	ClassD = {},
+}
+
+--------------------------------------------------
+-- UTILS
+--------------------------------------------------
+
+local function playerKey(player)
+
+	return
+		"player_"
+		.. tostring(player.UserId)
+
+end
+
+local function horizontalDistance(
+	a,
+	b
+)
+
+	local dx =
+		a.X - b.X
+
+	local dz =
+		a.Z - b.Z
+
+	return
+		dx * dx
+		+ dz * dz
+
+end
+
+--------------------------------------------------
+-- FIND CLASS FROM EXISTING COLOR
+--------------------------------------------------
+
+local function colorDistance(
+	a,
+	b
+)
+
+	local dr =
+		a.R - b.R
+
+	local dg =
+		a.G - b.G
+
+	local db =
+		a.B - b.B
+
+	return
+		dr * dr
+		+ dg * dg
+		+ db * db
+
+end
+
+local function getClassFromColor(part)
+
+	local bestClass = nil
+	local bestDistance = math.huge
+
+	for className, color
+		in pairs(
+			Config.ClassColors
+		)
+	do
+
+		local distance =
+			colorDistance(
+				part.Color,
+				color
+			)
+
+		if distance &lt; bestDistance then
+
+			bestDistance =
+				distance
+
+			bestClass =
+				className
+
+		end
+	end
+
+	return bestClass
+end
+
+--------------------------------------------------
+-- OBJECT SIZE ORDER
+--
+-- Builder generated:
+--
+-- #1 = scale 0.82
+-- #2 = scale 1.00
+-- #3 = scale 0.72
+--
+-- Ascending size therefore:
+-- 3, 1, 2
+--------------------------------------------------
+
+local SIZE_ORDER = {
+
+	A = {
+		"A1",
+		"A2",
+	},
+
+	B = {
+		"B3",
+		"B1",
+		"B2",
+	},
+
+	C = {
+		"C3",
+		"C1",
+		"C2",
+	},
+
+	D = {
+		"D1",
+		"D2",
+	},
+}
+
+local EXPECTED_COUNTS = {
+
+	Root = {
+		A = 2,
+		B = 3,
+		C = 3,
+		D = 2,
+	},
+
+	Left = {
+		A = 2,
+		B = 3,
+	},
+
+	Right = {
+		C = 3,
+		D = 2,
+	},
+
+	ClassA = {
+		A = 2,
+	},
+
+	ClassB = {
+		B = 3,
+	},
+
+	ClassC = {
+		C = 3,
+	},
+
+	ClassD = {
+		D = 2,
+	},
+}
+
+--------------------------------------------------
+-- BLACK OUTLINE
+--------------------------------------------------
+
+local function setupHighlight(part)
+
+	local outline =
+		part:FindFirstChild(
+			"DT_BlackOutline"
+		)
+
+	if not outline then
+
+		outline =
+			Instance.new(
+				"SelectionBox"
+			)
+
+		outline.Name =
+			"DT_BlackOutline"
+
+		outline.Parent =
+			part
+	end
+
+	outline.Adornee =
+		part
+
+	outline.Color3 =
+		Color3.fromRGB(
+			0,
+			0,
+			0
+		)
+
+	outline.LineThickness =
+		0.05
+
+	outline.SurfaceTransparency =
+		1
+
+	outline.Transparency =
+		0
+
+	outline.Visible =
+		false
+end
+
+local function normalizeFinalClassFloors()
+
+	local gray =
+		Color3.fromRGB(
+			224,
+			229,
+			238
+		)
+
+	local black =
+		Color3.fromRGB(
+			28,
+			33,
+			42
+		)
+
+	for _, nodeName
+		in ipairs({
+			"ClassA",
+			"ClassB",
+			"ClassC",
+			"ClassD",
+		})
+	do
+
+		local floor =
+			floors[nodeName]
+
+		if floor then
+
+			--------------------------------------------------
+			-- Make final box floor gray
+			--------------------------------------------------
+
+			floor.Color =
+				gray
+
+			--------------------------------------------------
+			-- Make title text black
+			--------------------------------------------------
+
+			local gui =
+				floor:FindFirstChild(
+					"TopLabel"
+				)
+
+			local label =
+				gui
+				and gui:FindFirstChild(
+					"Text"
+				)
+
+			if label
+				and label:IsA("TextLabel")
+			then
+
+				label.TextColor3 =
+					black
+
+				label.TextStrokeTransparency =
+					1
+			end
+		end
+	end
+end
+
+--------------------------------------------------
+-- TAG ONE OBJECT
+--------------------------------------------------
+
+local function tagObject(
+	part,
+	objectId,
+	node
+)
+
+	local data =
+		Config.Objects[objectId]
+
+	if not data then
+
+		error(
+			"[DecisionTree] Unknown object "
+				.. tostring(objectId)
+		)
+
+	end
+
+	part:SetAttribute(
+		"DT_IsDataObject",
+		true
+	)
+
+	part:SetAttribute(
+		"DT_ObjectId",
+		objectId
+	)
+
+	part:SetAttribute(
+		"DT_SourceNode",
+		node
+	)
+
+	part:SetAttribute(
+		"DT_X",
+		data.X
+	)
+
+	part:SetAttribute(
+		"DT_Y",
+		data.Y
+	)
+
+	part:SetAttribute(
+		"DT_Class",
+		data.Class
+	)
+
+	part.CanCollide =
+		false
+
+	part.CanTouch =
+		false
+
+	part.CanQuery =
+		true
+
+	part.CastShadow =
+		false
+
+	-- Base transparency stays zero.
+	-- Each player hides/shows locally.
+	part.Transparency =
+		0
+
+	setupHighlight(part)
+
+	partByNode[node][objectId] =
+		part
+
+end
+
+--------------------------------------------------
+-- ASSIGN IDS INSIDE ONE NODE
+--------------------------------------------------
+
+local function assignNodeObjects(
+	node,
+	parts
+)
+
+	local byClass = {
+		A = {},
+		B = {},
+		C = {},
+		D = {},
+	}
+
+	for _, part
+		in ipairs(parts)
+	do
+
+		local className =
+			getClassFromColor(
+				part
+			)
+
+		table.insert(
+			byClass[className],
+			part
+		)
+
+	end
+
+	local expected =
+		EXPECTED_COUNTS[node]
+
+	for className, objects
+		in pairs(byClass)
+	do
+
+		local expectedCount =
+			expected[className]
+			or 0
+
+		if #objects ~= expectedCount then
+
+			error(
+				"[DecisionTree] "
+					.. node
+					.. " class "
+					.. className
+					.. ": expected "
+					.. tostring(expectedCount)
+					.. " objects, found "
+					.. tostring(#objects)
+			)
+
+		end
+
+		if expectedCount &gt; 0 then
+
+			table.sort(
+				objects,
+
+				function(a, b)
+
+					return
+						a.Size.Magnitude
+						&lt;
+						b.Size.Magnitude
+
+				end
+			)
+
+			local idOrder =
+				SIZE_ORDER[className]
+
+			for index, part
+				in ipairs(objects)
+			do
+
+				local objectId =
+					idOrder[index]
+
+				tagObject(
+					part,
+					objectId,
+					node
+				)
+
+			end
+		end
+	end
+end
+
+--------------------------------------------------
+-- GET DATAOBJECTS
+--------------------------------------------------
+
+local function getDataObjects(layer)
+
+	local result = {}
+
+	for _, descendant
+		in ipairs(
+			layer:GetDescendants()
+		)
+	do
+
+		if descendant:IsA("BasePart")
+			and descendant.Name == "DataObject"
+		then
+
+			table.insert(
+				result,
+				descendant
+			)
+
+		end
+	end
+
+	return result
+end
+
+--------------------------------------------------
+-- TAG BOX GEOMETRY
+--------------------------------------------------
+
+local function tagNodeGeometry()
+
+	for node, info
+		in pairs(NODE_GEOMETRY)
+	do
+
+		for _, descendant
+			in ipairs(
+				info.Layer:GetDescendants()
+			)
+		do
+
+			if descendant:IsA("BasePart") then
+
+				if string.sub(
+					descendant.Name,
+					1,
+					#info.Prefix
+					) == info.Prefix
+				then
+
+					descendant:SetAttribute(
+						"DT_NodeId",
+						node
+					)
+
+				end
+			end
+		end
+	end
+end
+
+--------------------------------------------------
+-- FIX RIGHT BRANCH LABELS
+--
+-- Current physical model was built with
+-- YES -&gt; D and NO -&gt; C.
+--
+-- With C3 x=7 the correct rule is:
+-- YES -&gt; C
+-- NO  -&gt; D
+--------------------------------------------------
+
+local function setBeltText(
+	beltName,
+	text,
+	color
+)
+
+	local belt =
+		layer3:FindFirstChild(
+			beltName
+		)
+
+	if not belt then
+		return
+	end
+
+	local gui =
+		belt:FindFirstChild(
+			"TopLabel"
+		)
+
+	local label =
+		gui
+		and gui:FindFirstChild(
+			"Text"
+		)
+
+	if label
+		and label:IsA("TextLabel")
+	then
+
+		label.Text =
+			text
+
+		label.TextColor3 =
+			color
+
+	end
+end
+
+local function fixRightBranchLabels()
+
+	setBeltText(
+		"RightYesToDBelt",
+		"NO",
+		Color3.fromRGB(
+			235,
+			70,
+			70
+		)
+	)
+
+	setBeltText(
+		"RightNoToCBelt",
+		"YES",
+		Color3.fromRGB(
+			47,
+			214,
+			102
+		)
+	)
+
+end
+
+--------------------------------------------------
+-- PHYSICAL TREE SETUP
+--------------------------------------------------
+
+local function setupPhysicalTree()
+
+	tagNodeGeometry()
+
+	--------------------------------------------------
+	-- ROOT
+	--------------------------------------------------
+
+	local rootObjects =
+		getDataObjects(
+			layer1
+		)
+
+	if #rootObjects ~= 10 then
+
+		error(
+			"[DecisionTree] Layer1 must have 10 DataObjects, found "
+				.. tostring(#rootObjects)
+		)
+
+	end
+
+	assignNodeObjects(
+		"Root",
+		rootObjects
+	)
+
+	--------------------------------------------------
+	-- LEFT / RIGHT
+	--------------------------------------------------
+
+	local layer2Objects =
+		getDataObjects(
+			layer2
+		)
+
+	if #layer2Objects ~= 10 then
+
+		error(
+			"[DecisionTree] Layer2 must have 10 DataObjects, found "
+				.. tostring(#layer2Objects)
+		)
+
+	end
+
+	local leftObjects = {}
+	local rightObjects = {}
+
+	for _, part
+		in ipairs(layer2Objects)
+	do
+
+		local leftDistance =
+			horizontalDistance(
+				part.Position,
+				floors.Left.Position
+			)
+
+		local rightDistance =
+			horizontalDistance(
+				part.Position,
+				floors.Right.Position
+			)
+
+		if leftDistance
+			&lt;
+			rightDistance
+		then
+
+			table.insert(
+				leftObjects,
+				part
+			)
+
+		else
+
+			table.insert(
+				rightObjects,
+				part
+			)
+
+		end
+	end
+
+	assignNodeObjects(
+		"Left",
+		leftObjects
+	)
+
+	assignNodeObjects(
+		"Right",
+		rightObjects
+	)
+
+	--------------------------------------------------
+	-- FINAL CLASSES
+	--------------------------------------------------
+
+	local layer3Objects =
+		getDataObjects(
+			layer3
+		)
+
+	if #layer3Objects ~= 10 then
+
+		error(
+			"[DecisionTree] Layer3 must have 10 DataObjects, found "
+				.. tostring(#layer3Objects)
+		)
+
+	end
+
+	local finalGroups = {
+
+		ClassA = {},
+		ClassB = {},
+		ClassC = {},
+		ClassD = {},
+	}
+
+	for _, part
+		in ipairs(layer3Objects)
+	do
+
+		local nearestNode =
+			nil
+
+		local nearestDistance =
+			math.huge
+
+		for _, node
+			in ipairs({
+				"ClassA",
+				"ClassB",
+				"ClassC",
+				"ClassD",
+			})
+		do
+
+			local distance =
+				horizontalDistance(
+					part.Position,
+					floors[node].Position
+				)
+
+			if distance
+				&lt;
+				nearestDistance
+			then
+
+				nearestDistance =
+					distance
+
+				nearestNode =
+					node
+
+			end
+		end
+
+		table.insert(
+			finalGroups[nearestNode],
+			part
+		)
+
+	end
+
+	for node, parts
+		in pairs(finalGroups)
+	do
+
+		assignNodeObjects(
+			node,
+			parts
+		)
+
+	end
+
+	normalizeFinalClassFloors()
+	fixRightBranchLabels()
+
+	tree:SetAttribute(
+		"DT_SetupReady",
+		true
+	)
+
+	print(
+		"[DecisionTree] Physical setup complete. 30 objects tagged."
+	)
+
+end
+
+warn("[DecisionTree] Starting physical setup...")
+
+local setupSuccess, setupError = xpcall(
+	setupPhysicalTree,
+	debug.traceback
+)
+
+if setupSuccess then
+	warn("[DecisionTree] PHYSICAL SETUP SUCCESS")
+else
+	warn("[DecisionTree] PHYSICAL SETUP FAILED")
+	warn(setupError)
+	error(setupError)
+end
+--------------------------------------------------
+-- STATE
+--------------------------------------------------
+
+local function newState()
+
+	return {
+
+		RootDone = {},
+		FinalDone = {},
+	}
+
+end
+
+local function resetDecisionTree(player)
+
+	local state =
+		newState()
+
+	states[player] =
+		state
+
+	heldObjects[player] =
+		nil
+
+	dirty[player] =
+		nil
+
+	player:SetAttribute(
+		"DecisionTreeCompleted",
+		false
+	)
+
+	print(
+		"[DecisionTree]",
+		player.Name,
+		"progress reset"
+	)
+
+	return state
+end
+
+local function sanitizeState(raw)
+
+	local state =
+		newState()
+
+	if type(raw) ~= "table" then
+		return state
+	end
+
+	if type(raw.RootDone)
+		== "table"
+	then
+
+		for _, objectId
+			in ipairs(
+				Config.ObjectOrder
+			)
+		do
+
+			if raw.RootDone[objectId]
+				== true
+			then
+
+				state.RootDone[objectId] =
+					true
+
+			end
+		end
+	end
+
+	if type(raw.FinalDone)
+		== "table"
+	then
+
+		for _, objectId
+			in ipairs(
+				Config.ObjectOrder
+			)
+		do
+
+			if raw.FinalDone[objectId]
+				== true
+			then
+
+				state.FinalDone[objectId] =
+					true
+
+			end
+		end
+	end
+
+	return state
+end
+
+--------------------------------------------------
+-- COMPLETION
+--------------------------------------------------
+
+local function rootComplete(state)
+
+	for _, objectId
+		in ipairs(
+			Config.ObjectOrder
+		)
+	do
+
+		if state.RootDone[objectId]
+			~= true
+		then
+
+			return false
+
+		end
+	end
+
+	return true
+end
+
+local function finalComplete(state)
+
+	for _, objectId
+		in ipairs(
+			Config.ObjectOrder
+		)
+	do
+
+		if state.FinalDone[objectId]
+			~= true
+		then
+
+			return false
+
+		end
+	end
+
+	return true
+end
+
+--------------------------------------------------
+-- PUBLIC STATE
+--------------------------------------------------
+
+local function copyTrueMap(source)
+
+	local result = {}
+
+	for key, value
+		in pairs(source)
+	do
+
+		if value == true then
+			result[key] = true
+		end
+	end
+
+	return result
+end
+
+local function publicState(state)
+
+	return {
+
+		RootDone =
+			copyTrueMap(
+				state.RootDone
+			),
+
+		FinalDone =
+			copyTrueMap(
+				state.FinalDone
+			),
+
+		RootComplete =
+			rootComplete(state),
+
+		Completed =
+			finalComplete(state),
+	}
+
+end
+
+--------------------------------------------------
+-- LOAD
+--------------------------------------------------
+
+local function loadPlayer(player)
+
+	if states[player] then
+		return states[player]
+	end
+
+	local state =
+		newState()
+
+	local success, saved = true, nil
+
+	if SAVE_PROGRESS then
+		success, saved =
+			pcall(function()
+
+				return progressStore:GetAsync(
+					playerKey(player)
+				)
+
+			end)
+	end
+
+	if success and SAVE_PROGRESS then
+
+		state =
+			sanitizeState(saved)
+
+	elseif SAVE_PROGRESS then
+
+		warn(
+			"[DecisionTree] Could not load progress for",
+			player.Name,
+			saved
+		)
+
+	end
+
+	states[player] =
+		state
+
+	player:SetAttribute(
+		"DecisionTreeCompleted",
+		finalComplete(state)
+	)
+
+	return state
+end
+
+--------------------------------------------------
+-- SAVE
+--------------------------------------------------
+
+local function savePlayer(player)
+
+	if not SAVE_PROGRESS then
+		return
+	end
+
+	local state =
+		states[player]
+
+	if not state then
+		return
+	end
+
+	local currentRoot =
+		copyTrueMap(
+			state.RootDone
+		)
+
+	local currentFinal =
+		copyTrueMap(
+			state.FinalDone
+		)
+
+	local success, err =
+		pcall(function()
+
+			progressStore:UpdateAsync(
+				playerKey(player),
+
+				function(old)
+
+					local merged =
+					sanitizeState(old)
+
+					for objectId
+						in pairs(currentRoot)
+					do
+
+						merged.RootDone[objectId] =
+						true
+
+					end
+
+					for objectId
+						in pairs(currentFinal)
+					do
+
+						merged.FinalDone[objectId] =
+						true
+
+					end
+
+					return merged
+				end
+			)
+
+		end)
+
+	if not success then
+
+		warn(
+			"[DecisionTree] Could not save progress for",
+			player.Name,
+			err
+		)
+
+	end
+end
+
+--------------------------------------------------
+-- EXACT SAVE
+-- Used by manual restart because normal save
+-- only adds progress and never removes it.
+--------------------------------------------------
+
+local function saveExactPlayerState(player)
+
+	local state =
+		states[player]
+
+	if not state then
+		return false
+	end
+
+	if not SAVE_PROGRESS then
+		return true
+	end
+
+	local snapshot = {
+
+		RootDone =
+			copyTrueMap(
+				state.RootDone
+			),
+
+		FinalDone =
+			copyTrueMap(
+				state.FinalDone
+			),
+	}
+
+	local success, err =
+		pcall(function()
+
+			progressStore:SetAsync(
+				playerKey(player),
+				snapshot
+			)
+
+		end)
+
+	if not success then
+
+		warn(
+			"[DecisionTree] Could not save exact state for",
+			player.Name,
+			err
+		)
+
+	end
+
+	return success
+end
+
+--------------------------------------------------
+-- DEBOUNCED SAVE
+--------------------------------------------------
+
+local function markDirty(player)
+
+	dirty[player] =
+		true
+
+	if saveScheduled[player] then
+		return
+	end
+
+	saveScheduled[player] =
+		true
+
+	task.delay(
+		2,
+
+		function()
+
+			saveScheduled[player] =
+				nil
+
+			if not states[player] then
+				return
+			end
+
+			if dirty[player] then
+
+				dirty[player] =
+					false
+
+				savePlayer(player)
+
+			end
+		end
+	)
+
+end
+
+--------------------------------------------------
+-- ACTIVE CHECK
+--------------------------------------------------
+
+local function isActive(player)
+
+	return
+		player:GetAttribute(
+			"TreeLevelInside"
+		) == true
+
+		and
+
+		player:GetAttribute(
+			"TreeLevelActiveSublevel"
+		) == 1
+
+end
+
+--------------------------------------------------
+-- AVAILABILITY
+--------------------------------------------------
+
+local function isObjectAvailable(
+	state,
+	objectId,
+	sourceNode
+)
+
+	if not Config.Objects[objectId] then
+		return false
+	end
+
+	if sourceNode == "Root" then
+
+		return
+			state.RootDone[objectId]
+			~= true
+
+	end
+
+	if sourceNode == "Left"
+		or sourceNode == "Right"
+	then
+
+		if not rootComplete(state) then
+			return false
+		end
+
+		if state.RootDone[objectId]
+			~= true
+		then
+
+			return false
+		end
+
+		if state.FinalDone[objectId]
+			== true
+		then
+
+			return false
+		end
+
+		local expectedMiddle =
+			Config.GetExpectedTarget(
+				objectId,
+				"Root"
+			)
+
+		return
+			expectedMiddle
+			== sourceNode
+
+	end
+
+	return false
+end
+
+--------------------------------------------------
+-- PUBLIC HELD OBJECT
+--------------------------------------------------
+
+local function publicHeld(held)
+
+	if not held then
+		return nil
+	end
+
+	local data =
+		Config.Objects[
+	held.ObjectId
+	]
+
+	return {
+
+		ObjectId =
+			held.ObjectId,
+
+		SourceNode =
+			held.SourceNode,
+
+		X =
+			data.X,
+
+		Y =
+			data.Y,
+
+		ConditionText =
+			Config.GetConditionText(
+				held.SourceNode
+			),
+	}
+end
+
+--------------------------------------------------
+-- RPC
+--------------------------------------------------
+
+rpc.OnServerInvoke =
+	function(
+		player,
+		action,
+		payload
+	)
+
+	local state =
+		states[player]
+		or loadPlayer(player)
+
+	--------------------------------------------------
+	-- BEGIN SUBLEVEL
+	-- Continue from existing progress.
+	--------------------------------------------------
+
+	if action == "Begin" then
+
+		if not isActive(player) then
+
+			return {
+				Ok = false,
+				Error = "Decision tree level is not active",
+			}
+
+		end
+
+		-- Nothing stays in the player's hand
+		-- after leaving/re-entering the zone.
+		heldObjects[player] = nil
+
+		player:SetAttribute(
+			"DecisionTreeCompleted",
+			finalComplete(state)
+		)
+
+		return {
+
+			Ok = true,
+
+			State =
+				publicState(
+					state
+				),
+
+			Held = nil,
+		}
+	end
+
+	--------------------------------------------------
+	-- RESTART
+	--------------------------------------------------
+
+	if action == "Restart" then
+
+		if not isActive(player) then
+
+			return {
+				Ok = false,
+				Error = "Decision tree level is not active",
+			}
+
+		end
+
+		state =
+			resetDecisionTree(
+				player
+			)
+
+		heldObjects[player] = nil
+
+		-- Restart must also overwrite saved progress.
+		saveExactPlayerState(
+			player
+		)
+
+		return {
+
+			Ok = true,
+
+			State =
+				publicState(
+					state
+				),
+
+			Held = nil,
+		}
+	end
+
+	--------------------------------------------------
+	-- STATE
+	--------------------------------------------------
+
+
+
+	if action == "GetState" then
+
+		return {
+
+			Ok = true,
+
+			State =
+				publicState(
+					state
+				),
+
+			Held = nil,
+		}
+	end
+
+	--------------------------------------------------
+	-- EVERYTHING ELSE REQUIRES ACTIVE LEVEL
+	--------------------------------------------------
+
+	if not isActive(player) then
+
+		heldObjects[player] =
+			nil
+
+		return {
+
+			Ok = false,
+			Error = "Decision tree level is not active",
+		}
+	end
+
+	--------------------------------------------------
+	-- PICK
+	--------------------------------------------------
+
+	if action == "Pick" then
+
+		if type(payload)
+			~= "table"
+		then
+
+			return {
+				Ok = false,
+				Error = "Invalid payload",
+			}
+		end
+
+		local objectId =
+			payload.ObjectId
+
+		local sourceNode =
+			payload.SourceNode
+
+		if type(objectId)
+			~= "string"
+			or
+			type(sourceNode)
+			~= "string"
+		then
+
+			return {
+				Ok = false,
+				Error = "Invalid object",
+			}
+		end
+
+		local physical =
+			partByNode[sourceNode]
+			and
+			partByNode[sourceNode][objectId]
+
+		if not physical then
+
+			return {
+				Ok = false,
+				Error = "Physical object not found",
+			}
+		end
+
+		if not isObjectAvailable(
+			state,
+			objectId,
+			sourceNode
+			)
+		then
+
+			return {
+				Ok = false,
+				Error = "Object is not available",
+			}
+		end
+
+		--------------------------------------------------
+		-- Replaces previous held object.
+		--------------------------------------------------
+
+		heldObjects[player] = {
+
+			ObjectId =
+				objectId,
+
+			SourceNode =
+				sourceNode,
+		}
+
+		return {
+
+			Ok = true,
+
+			Held =
+				publicHeld(
+					heldObjects[player]
+				),
+
+			State =
+				publicState(
+					state
+				),
+		}
+	end
+
+	--------------------------------------------------
+	-- PLACE
+	--------------------------------------------------
+
+	if action == "Place" then
+
+		if type(payload)
+			~= "table"
+		then
+
+			return {
+				Ok = false,
+				Error = "Invalid payload",
+			}
+		end
+
+		local targetNode =
+			payload.TargetNode
+
+		if type(targetNode)
+			~= "string"
+		then
+
+			return {
+				Ok = false,
+				Error = "Invalid target",
+			}
+		end
+
+		local held =
+			heldObjects[player]
+
+		if not held then
+
+			return {
+				Ok = false,
+				Error = "Nothing is held",
+			}
+		end
+
+		--------------------------------------------------
+		-- Revalidate availability server-side.
+		--------------------------------------------------
+
+		if not isObjectAvailable(
+			state,
+			held.ObjectId,
+			held.SourceNode
+			)
+		then
+
+			heldObjects[player] =
+				nil
+
+			return {
+				Ok = false,
+				Error = "Held object is no longer available",
+			}
+		end
+
+		local expectedTarget =
+			Config.GetExpectedTarget(
+				held.ObjectId,
+				held.SourceNode
+			)
+
+		--------------------------------------------------
+		-- INCORRECT
+		--------------------------------------------------
+
+		if targetNode
+			~= expectedTarget
+		then
+
+			return {
+
+				Ok = true,
+
+				Correct = false,
+
+				Held =
+					publicHeld(
+						held
+					),
+
+				State =
+					publicState(
+						state
+					),
+			}
+		end
+
+		--------------------------------------------------
+		-- CORRECT ROOT
+		--------------------------------------------------
+
+		if held.SourceNode
+			== "Root"
+		then
+
+			state.RootDone[
+			held.ObjectId
+			] = true
+
+			--------------------------------------------------
+			-- CORRECT SECOND LAYER
+			--------------------------------------------------
+
+		elseif held.SourceNode
+			== "Left"
+			or
+			held.SourceNode
+			== "Right"
+		then
+
+			state.FinalDone[
+			held.ObjectId
+			] = true
+
+		else
+
+			return {
+
+				Ok = false,
+				Error = "Invalid source node",
+			}
+		end
+
+		--------------------------------------------------
+		-- Correct placement removes held object.
+		--------------------------------------------------
+
+		heldObjects[player] =
+			nil
+
+		markDirty(player)
+
+		local completed =
+			finalComplete(
+				state
+			)
+
+		if completed then
+
+			player:SetAttribute(
+				"DecisionTreeCompleted",
+				true
+			)
+
+		end
+
+		return {
+
+			Ok = true,
+
+			Correct = true,
+
+			Completed =
+				completed,
+
+			Held = nil,
+
+			State =
+				publicState(
+					state
+				),
+		}
+	end
+
+	--------------------------------------------------
+	-- CLEAR HELD
+	--------------------------------------------------
+
+	if action == "ClearHeld" then
+
+		heldObjects[player] =
+			nil
+
+		return {
+			Ok = true,
+		}
+	end
+
+	return {
+
+		Ok = false,
+		Error = "Unknown action",
+	}
+end
+
+--------------------------------------------------
+-- PLAYER
+--------------------------------------------------
+
+local function bindPlayer(player)
+
+	local state =
+		loadPlayer(player)
+
+	player:SetAttribute(
+		"DecisionTreeCompleted",
+		finalComplete(state)
+	)
+
+	local function clearHeldIfInactive()
+
+		if not isActive(player) then
+
+			heldObjects[player] =
+				nil
+
+			--------------------------------------------------
+			-- SAVE PARTIAL PROGRESS WHEN LEAVING SUBLEVEL
+			--------------------------------------------------
+
+			if dirty[player] then
+
+				dirty[player] =
+					nil
+
+				savePlayer(player)
+
+			end
+		end
+	end
+
+	player:GetAttributeChangedSignal(
+		"TreeLevelInside"
+	):Connect(
+		clearHeldIfInactive
+	)
+
+	player:GetAttributeChangedSignal(
+		"TreeLevelActiveSublevel"
+	):Connect(
+		clearHeldIfInactive
+	)
+
+end
+
+Players.PlayerAdded:Connect(
+	bindPlayer
+)
+
+for _, player
+	in ipairs(
+		Players:GetPlayers()
+	)
+do
+
+	task.spawn(
+		bindPlayer,
+		player
+	)
+
+end
+
+Players.PlayerRemoving:Connect(
+	function(player)
+
+		savePlayer(player)
+
+		states[player] =
+			nil
+
+		heldObjects[player] =
+			nil
+
+		dirty[player] =
+			nil
+
+		saveScheduled[player] =
+			nil
+
+	end
+)
+
+--------------------------------------------------
+-- SHUTDOWN
+--------------------------------------------------
+
+game:BindToClose(
+	function()
+
+		for _, player
+			in ipairs(
+				Players:GetPlayers()
+			)
+		do
+
+			savePlayer(player)
+
+		end
+	end
+)</string>
+        </Properties>
+      </Item>
+      <Item class="Script" referent="63">
+        <Properties>
+          <string name="Name">TreeLevelZoneController</string>
+          <string name="Source"><![CDATA[local Players =
+	game:GetService("Players")
+
+local DataStoreService =
+	game:GetService("DataStoreService")
+
+local ReplicatedStorage =
+	game:GetService("ReplicatedStorage")
+
+local RunService =
+	game:GetService("RunService")
+
+--------------------------------------------------
+-- SETTINGS
+--------------------------------------------------
+
+local MAX_SUBLEVEL =
+	4
+
+local CHECK_INTERVAL =
+	0.15
+
+--------------------------------------------------
+-- ZONE
+--------------------------------------------------
+
+local zone =
+	workspace:FindFirstChild(
+		"TreeLevelZone",
+		true
+	)
+
+if not zone then
+
+	error(
+		"[TreeLevel] TreeLevelZone was not found"
+	)
+
+end
+
+if not zone:IsA("BasePart") then
+
+	error(
+		"[TreeLevel] TreeLevelZone must be a BasePart"
+	)
+
+end
+
+--------------------------------------------------
+-- REMOTES
+--------------------------------------------------
+
+local remotes =
+	ReplicatedStorage
+	:WaitForChild("Remotes")
+
+local completeRemote =
+	remotes
+	:WaitForChild(
+		"TreeSublevelCompleted"
+	)
+
+local debugProgressRemote =
+	remotes
+	:WaitForChild(
+		"TreeLevelDebugChangeProgress"
+	)
+
+--------------------------------------------------
+-- NAVIGATION REMOTE
+--------------------------------------------------
+
+local navigateRemote =
+	remotes:FindFirstChild(
+		"TreeLevelNavigate"
+	)
+
+if not navigateRemote then
+
+	navigateRemote =
+		Instance.new(
+			"RemoteFunction"
+		)
+
+	navigateRemote.Name =
+		"TreeLevelNavigate"
+
+	navigateRemote.Parent =
+		remotes
+
+end
+
+if not navigateRemote:IsA(
+	"RemoteFunction"
+	)
+then
+
+	error(
+		"[TreeLevel] TreeLevelNavigate must be RemoteFunction"
+	)
+
+end
+
+--------------------------------------------------
+-- DATASTORE
+--------------------------------------------------
+
+local progressStore =
+	DataStoreService:GetDataStore(
+		"TreeLevelProgress_v1"
+	)
+
+-- Прогресс уровня НЕ сохраняется между заходами: новый заход — с подуровня 0 (загрузка и сохранение выключены).
+local SAVE_PROGRESS = false
+
+--------------------------------------------------
+-- RUNTIME
+--------------------------------------------------
+
+local progress = {}
+local insideZone = {}
+local activeSublevel = {}
+local loaded = {}
+local lastSaved = {}
+
+--------------------------------------------------
+-- REPLAY STATE
+--------------------------------------------------
+
+local replayReturn = {}
+local replayRestartTarget = {}
+local replayToken = {}
+
+--------------------------------------------------
+-- KEY
+--------------------------------------------------
+
+local function getKey(player)
+
+	return
+		"player_"
+		.. player.UserId
+
+end
+
+--------------------------------------------------
+-- SAVE
+--------------------------------------------------
+
+local function saveValue(
+	player,
+	value
+)
+
+	if not SAVE_PROGRESS then
+		lastSaved[player] = value
+		return true
+	end
+
+	local success, savedValue =
+		pcall(function()
+
+			return
+			progressStore:UpdateAsync(
+
+				getKey(player),
+
+				function(oldValue)
+
+					oldValue =
+					tonumber(
+						oldValue
+					) or 0
+
+					oldValue =
+					math.clamp(
+						math.floor(
+							oldValue
+						),
+						0,
+						MAX_SUBLEVEL
+					)
+
+					return
+					math.max(
+						oldValue,
+						value
+					)
+
+				end
+			)
+
+		end)
+
+	if success then
+
+		lastSaved[player] =
+			tonumber(
+				savedValue
+			) or value
+
+	else
+
+		warn(
+			"[TreeLevel] Could not save:",
+			player.Name,
+			savedValue
+		)
+
+	end
+
+	return success
+end
+
+--------------------------------------------------
+-- DEBUG SAVE
+--------------------------------------------------
+
+local function saveDebugValue(
+	player,
+	value
+)
+
+	if not RunService:IsStudio() then
+		return false
+	end
+
+	if not SAVE_PROGRESS then
+		lastSaved[player] = math.clamp(math.floor(value), 0, MAX_SUBLEVEL)
+		return true
+	end
+
+	value =
+		math.clamp(
+			math.floor(
+				value
+			),
+			0,
+			MAX_SUBLEVEL
+		)
+
+	local success, err =
+		pcall(function()
+
+			progressStore:SetAsync(
+				getKey(player),
+				value
+			)
+
+		end)
+
+	if not success then
+
+		warn(
+			"[TreeLevelDebug]",
+			err
+		)
+
+		return false
+	end
+
+	lastSaved[player] =
+		value
+
+	return true
+end
+
+--------------------------------------------------
+-- SAVE IF NEEDED
+--------------------------------------------------
+
+local function saveIfNeeded(player)
+
+	local value =
+		progress[player]
+
+	if value == nil then
+		return
+	end
+
+	if lastSaved[player] == value then
+		return
+	end
+
+	task.spawn(
+		function()
+
+			saveValue(
+				player,
+				value
+			)
+
+		end
+	)
+
+end
+
+--------------------------------------------------
+-- CLEAR REPLAY
+--------------------------------------------------
+
+local function clearReplay(player)
+
+	replayReturn[player] =
+		nil
+
+	replayRestartTarget[player] =
+		nil
+
+	player:SetAttribute(
+		"TreeLevelReplayReturn",
+		0
+	)
+
+	player:SetAttribute(
+		"TreeLevelReplayRestartTarget",
+		0
+	)
+
+end
+
+--------------------------------------------------
+-- LOAD
+--------------------------------------------------
+
+local function loadPlayer(player)
+
+	player:SetAttribute(
+		"TreeLevelInside",
+		false
+	)
+
+	player:SetAttribute(
+		"TreeLevelActiveSublevel",
+		0
+	)
+
+	player:SetAttribute(
+		"TreeLevelReplayReturn",
+		0
+	)
+
+	player:SetAttribute(
+		"TreeLevelReplayRestartTarget",
+		0
+	)
+
+	player:SetAttribute(
+		"TreeLevelReplayToken",
+		0
+	)
+
+	local value =
+		0
+
+	local success, savedValue = true, nil
+
+	if SAVE_PROGRESS then
+		success, savedValue =
+			pcall(function()
+
+				return
+				progressStore:GetAsync(
+					getKey(player)
+				)
+
+			end)
+	end
+
+	if success then
+
+		value =
+			tonumber(
+				savedValue
+			) or 0
+
+		value =
+			math.clamp(
+				math.floor(
+					value
+				),
+				0,
+				MAX_SUBLEVEL
+			)
+
+		lastSaved[player] =
+			value
+
+	else
+
+		warn(
+			"[TreeLevel] Load failed:",
+			player.Name
+		)
+
+	end
+
+	progress[player] =
+		value
+
+	player:SetAttribute(
+		"TreeLevelProgress",
+		value
+	)
+
+	loaded[player] =
+		true
+
+	print(
+		"[TreeLevel]",
+		player.Name,
+		"progress =",
+		value
+	)
+
+end
+
+--------------------------------------------------
+-- INSIDE ZONE?
+--------------------------------------------------
+
+local function isPlayerInsideZone(player)
+
+	local character =
+		player.Character
+
+	if not character then
+		return false
+	end
+
+	local humanoid =
+		character:FindFirstChildOfClass(
+			"Humanoid"
+		)
+
+	local root =
+		character:FindFirstChild(
+			"HumanoidRootPart"
+		)
+
+	if not humanoid
+		or not root
+	then
+
+		return false
+
+	end
+
+	if humanoid.Health <= 0 then
+		return false
+	end
+
+	local localPosition =
+		zone.CFrame
+		:PointToObjectSpace(
+			root.Position
+		)
+
+	local halfSize =
+		zone.Size * 0.5
+
+	return
+		math.abs(
+			localPosition.X
+		) <= halfSize.X
+
+		and
+
+		math.abs(
+			localPosition.Y
+		) <= halfSize.Y
+
+		and
+
+		math.abs(
+			localPosition.Z
+		) <= halfSize.Z
+
+end
+
+--------------------------------------------------
+-- START NEXT
+--------------------------------------------------
+
+local function startNextSublevel(player)
+
+	local completed =
+		progress[player] or 0
+
+	if completed >= MAX_SUBLEVEL then
+
+		activeSublevel[player] =
+			nil
+
+		player:SetAttribute(
+			"TreeLevelActiveSublevel",
+			0
+		)
+
+		return
+	end
+
+	local nextSublevel =
+		completed + 1
+
+	activeSublevel[player] =
+		nextSublevel
+
+	player:SetAttribute(
+		"TreeLevelActiveSublevel",
+		nextSublevel
+	)
+
+	print(
+		"[TreeLevel] START",
+		nextSublevel
+	)
+
+end
+
+--------------------------------------------------
+-- ENTER
+--------------------------------------------------
+
+local function onEnterZone(player)
+
+	insideZone[player] =
+		true
+
+	player:SetAttribute(
+		"TreeLevelInside",
+		true
+	)
+
+	startNextSublevel(
+		player
+	)
+
+end
+
+--------------------------------------------------
+-- EXIT
+--------------------------------------------------
+
+local function onExitZone(player)
+
+	insideZone[player] =
+		false
+
+	activeSublevel[player] =
+		nil
+
+	clearReplay(
+		player
+	)
+
+	player:SetAttribute(
+		"TreeLevelInside",
+		false
+	)
+
+	player:SetAttribute(
+		"TreeLevelActiveSublevel",
+		0
+	)
+
+	saveIfNeeded(
+		player
+	)
+
+end
+
+--------------------------------------------------
+-- PREVIOUS / RESUME REPLAY
+--------------------------------------------------
+
+navigateRemote.OnServerInvoke =
+	function(
+		player,
+		action
+	)
+
+	if not loaded[player] then
+
+		return {
+			Ok = false,
+			Error = "Not loaded",
+		}
+
+	end
+
+	if insideZone[player] ~= true then
+
+		return {
+			Ok = false,
+			Error = "Outside level zone",
+		}
+
+	end
+
+	--------------------------------------------------
+	-- PREVIOUS
+	--------------------------------------------------
+
+	if action == "Previous" then
+
+		local current =
+			activeSublevel[player]
+			or 0
+
+		if current <= 1 then
+
+			return {
+				Ok = false,
+				Error = "No previous sublevel",
+			}
+
+		end
+
+		local target =
+			current - 1
+
+		replayReturn[player] =
+			current
+
+		replayRestartTarget[player] =
+			target
+
+		replayToken[player] =
+			(replayToken[player] or 0)
+			+ 1
+
+		player:SetAttribute(
+			"TreeLevelReplayReturn",
+			current
+		)
+
+		player:SetAttribute(
+			"TreeLevelReplayRestartTarget",
+			target
+		)
+
+		player:SetAttribute(
+			"TreeLevelReplayToken",
+			replayToken[player]
+		)
+
+		activeSublevel[player] =
+			target
+
+		player:SetAttribute(
+			"TreeLevelActiveSublevel",
+			target
+		)
+
+		print(
+			"[TreeLevel] PREVIOUS:",
+			current,
+			"->",
+			target
+		)
+
+		return {
+			Ok = true,
+			TargetSublevel = target,
+		}
+
+	end
+
+	--------------------------------------------------
+	-- FINISHED REPLAY
+	--------------------------------------------------
+
+	if action == "ResumeReplay" then
+
+		local returnTo =
+			replayReturn[player]
+
+		if not returnTo then
+
+			return {
+				Ok = false,
+				Error = "No replay active",
+			}
+
+		end
+
+		clearReplay(
+			player
+		)
+
+		activeSublevel[player] =
+			returnTo
+
+		player:SetAttribute(
+			"TreeLevelActiveSublevel",
+			returnTo
+		)
+
+		print(
+			"[TreeLevel] REPLAY FINISHED ->",
+			returnTo
+		)
+
+		return {
+			Ok = true,
+			TargetSublevel = returnTo,
+		}
+
+	end
+
+	--------------------------------------------------
+	-- NEXT COMPLETED SUBLEVEL
+	--------------------------------------------------
+
+	if action == "Next" then
+
+		local current =
+			activeSublevel[player]
+			or 0
+
+		local completed =
+			progress[player]
+			or 0
+
+		--------------------------------------------------
+		-- The current sublevel must already be completed.
+		-- This prevents skipping unfinished content.
+		--------------------------------------------------
+
+		if current < 1
+			or current > completed
+			or current >= MAX_SUBLEVEL
+		then
+
+			return {
+				Ok = false,
+				Error = "Next sublevel is locked",
+			}
+
+		end
+
+		local target =
+			current + 1
+
+		--------------------------------------------------
+		-- If NEXT reaches the sublevel from which replay
+		-- started, replay mode is finished normally.
+		--------------------------------------------------
+
+		local returnTo =
+			replayReturn[player]
+
+		if returnTo
+			and target >= returnTo
+		then
+
+			clearReplay(
+				player
+			)
+
+		end
+
+		activeSublevel[player] =
+			target
+
+		player:SetAttribute(
+			"TreeLevelActiveSublevel",
+			target
+		)
+
+		print(
+			"[TreeLevel] NEXT:",
+			current,
+			"->",
+			target
+		)
+
+		return {
+			Ok = true,
+			TargetSublevel = target,
+		}
+
+	end
+
+	return {
+		Ok = false,
+		Error = "Unknown action",
+	}
+
+end
+
+--------------------------------------------------
+-- NORMAL COMPLETION
+--------------------------------------------------
+
+completeRemote.OnServerEvent:Connect(
+	function(
+		player,
+		sublevelNumber
+	)
+
+		if not loaded[player] then
+			return
+		end
+
+		if insideZone[player] ~= true then
+			return
+		end
+
+		if type(
+			sublevelNumber
+			) ~= "number"
+		then
+
+			return
+
+		end
+
+		sublevelNumber =
+			math.floor(
+				sublevelNumber
+			)
+
+		--------------------------------------------------
+		-- DECISION TREE MUST REALLY BE COMPLETE
+		--------------------------------------------------
+
+		if sublevelNumber == 1 then
+
+			if player:GetAttribute(
+				"DecisionTreeCompleted"
+				) ~= true
+			then
+
+				warn(
+					"[TreeLevel] Tree completion rejected"
+				)
+
+				return
+
+			end
+		end
+
+		local completed =
+			progress[player] or 0
+
+		local expected =
+			completed + 1
+
+		if sublevelNumber ~= expected then
+
+			warn(
+				"[TreeLevel] expected",
+				expected,
+				"got",
+				sublevelNumber
+			)
+
+			return
+		end
+
+		if activeSublevel[player]
+			~= expected
+		then
+
+			return
+
+		end
+
+		--------------------------------------------------
+		-- COMPLETE
+		--------------------------------------------------
+
+		progress[player] =
+			expected
+
+		player:SetAttribute(
+			"TreeLevelProgress",
+			expected
+		)
+
+		activeSublevel[player] =
+			nil
+
+		player:SetAttribute(
+			"TreeLevelActiveSublevel",
+			0
+		)
+
+		print(
+			"[TreeLevel] COMPLETED",
+			expected
+		)
+
+		saveIfNeeded(
+			player
+		)
+
+		if expected >= MAX_SUBLEVEL then
+			return
+		end
+
+		--------------------------------------------------
+		-- START NEXT AFTER SHORT TRANSITION
+		--------------------------------------------------
+
+		task.delay(
+			0.5,
+
+			function()
+
+				if player.Parent
+					~= Players
+				then
+
+					return
+
+				end
+
+				if insideZone[player]
+					~= true
+				then
+
+					return
+
+				end
+
+				if progress[player]
+					~= expected
+				then
+
+					return
+
+				end
+
+				startNextSublevel(
+					player
+				)
+
+			end
+		)
+
+	end
+)
+
+--------------------------------------------------
+-- DEBUG K / L
+--------------------------------------------------
+
+debugProgressRemote.OnServerEvent:Connect(
+	function(
+		player,
+		delta
+	)
+
+		if not RunService:IsStudio() then
+			return
+		end
+
+		if not loaded[player] then
+			return
+		end
+
+		if delta ~= 1
+			and delta ~= -1
+		then
+
+			return
+
+		end
+
+		local oldProgress =
+			progress[player] or 0
+
+		local newProgress =
+			math.clamp(
+				oldProgress + delta,
+				0,
+				MAX_SUBLEVEL
+			)
+
+		if newProgress == oldProgress then
+			return
+		end
+
+		if not saveDebugValue(
+			player,
+			newProgress
+			)
+		then
+
+			return
+
+		end
+
+		clearReplay(
+			player
+		)
+
+		progress[player] =
+			newProgress
+
+		player:SetAttribute(
+			"TreeLevelProgress",
+			newProgress
+		)
+
+		if insideZone[player] then
+
+			if newProgress >= MAX_SUBLEVEL then
+
+				activeSublevel[player] =
+					nil
+
+				player:SetAttribute(
+					"TreeLevelActiveSublevel",
+					0
+				)
+
+			else
+
+				activeSublevel[player] =
+					newProgress + 1
+
+				player:SetAttribute(
+					"TreeLevelActiveSublevel",
+					newProgress + 1
+				)
+
+			end
+
+		else
+
+			activeSublevel[player] =
+				nil
+
+			player:SetAttribute(
+				"TreeLevelActiveSublevel",
+				0
+			)
+
+		end
+
+	end
+)
+
+--------------------------------------------------
+-- ZONE LOOP
+--------------------------------------------------
+
+task.spawn(
+	function()
+
+		while true do
+
+			for _, player
+				in ipairs(
+					Players:GetPlayers()
+				)
+			do
+
+				if loaded[player] then
+
+					local nowInside =
+						isPlayerInsideZone(
+							player
+						)
+
+					local wasInside =
+						insideZone[player]
+						== true
+
+					if nowInside
+						and not wasInside
+					then
+
+						onEnterZone(
+							player
+						)
+
+					elseif not nowInside
+						and wasInside
+					then
+
+						onExitZone(
+							player
+						)
+
+					end
+				end
+			end
+
+			task.wait(
+				CHECK_INTERVAL
+			)
+
+		end
+
+	end
+)
+
+--------------------------------------------------
+-- PLAYERS
+--------------------------------------------------
+
+Players.PlayerAdded:Connect(
+	loadPlayer
+)
+
+for _, player
+	in ipairs(
+		Players:GetPlayers()
+	)
+do
+
+	task.spawn(
+		loadPlayer,
+		player
+	)
+
+end
+
+Players.PlayerRemoving:Connect(
+	function(player)
+
+		if progress[player] ~= nil then
+
+			saveValue(
+				player,
+				progress[player]
+			)
+
+		end
+
+		progress[player] =
+			nil
+
+		insideZone[player] =
+			nil
+
+		activeSublevel[player] =
+			nil
+
+		loaded[player] =
+			nil
+
+		lastSaved[player] =
+			nil
+
+		replayReturn[player] =
+			nil
+
+		replayRestartTarget[player] =
+			nil
+
+		replayToken[player] =
+			nil
+
+	end
+)
+
+--------------------------------------------------
+-- SHUTDOWN
+--------------------------------------------------
+
+game:BindToClose(
+	function()
+
+		for _, player
+			in ipairs(
+				Players:GetPlayers()
+			)
+		do
+
+			if progress[player] ~= nil then
+
+				saveValue(
+					player,
+					progress[player]
+				)
+
+			end
+		end
+	end
+)
+]]></string>
+        </Properties>
+      </Item>
     </Item>
-    <Item class="Script" referent="62">
+    <Item class="Script" referent="64">
       <Properties>
         <string name="Name">RegressionLevelServer</string>
         <string name="Source"><![CDATA[-- RegressionLevelServer: копирует CFrame и Size площадок уровня «Регрессия» в атрибуты папки
@@ -9202,16 +12400,138 @@ level.ChildAdded:Connect(publish)
 ]]></string>
       </Properties>
     </Item>
+    <Item class="Script" referent="65">
+      <Properties>
+        <string name="Name">DecisionTreeLabService</string>
+        <string name="Source"><![CDATA[local Players=game:GetService("Players")
+local RS=game:GetService("ReplicatedStorage")
+local SS=game:GetService("ServerStorage")
+local M=require(RS:WaitForChild("DecisionTreeLabMath"))
+local rpc=RS:WaitForChild("DecisionTreeLabRPC")
+local sources=SS:WaitForChild("DecisionTreeLabDatasetsV2")
+local names={Tree="Tree",Forest="Forest",Boost="Boost"}
+local data={}
+for mode,name in pairs(names) do
+    local source=require(sources:WaitForChild(name))
+    data[mode]=M.DecodeDataset(source.Encoded,source.Count)
+    assert(#data[mode].train>0 and #data[mode].validation>0 and #data[mode].test>0,"Missing dataset split")
+end
+-- Прогресс лаборатории НЕ сохраняется между заходами: каждый новый заход начинается с уровня 1 (только память сервера).
+local progress={}
+local busy={}
+local modelCache={Forest={},Boost={}}
+local stageIndex={Tree=1,Forest=2,Boost=3}
+local gates={
+    Tree={Accuracy=0.95,MacroF1=0.95},
+    Forest={Accuracy=0.78,MacroF1=0.75},
+    Boost={Accuracy=0.70,MacroF1=0.65},
+}
+local function integer(value,minimum,maximum)
+    return type(value)=="number" and value%1==0 and value>=minimum and value<=maximum
+end
+local function stateFor(player)
+    if progress[player] then return progress[player] end
+    local state={Unlocked=1,Persistent=false}
+    progress[player]=state
+    return state
+end
+local function publicState(state)
+    return {Unlocked=state.Unlocked,Persistent=state.Persistent}
+end
+local function authorize(player,mode)
+    local index=stageIndex[mode]
+    assert(index,"Unknown lesson level")
+    local state=stateFor(player)
+    assert(index<=state.Unlocked,"Finish the preceding lesson first")
+    return state,index
+end
+local function classifier(mode,config)
+    assert(type(config)=="table","Missing model configuration")
+    if mode=="Tree" then
+        local graph=M.ValidateGraph(config.Graph)
+        return function(row) return M.PredictGraph(row,graph) end
+    elseif mode=="Forest" then
+        local count,depth=config.Count,config.Depth
+        assert(integer(count,3,11) and integer(depth,2,5),"Invalid forest controls")
+        local cacheKey=count..":"..depth
+        local trees=modelCache.Forest[cacheKey]
+        if not trees then
+            trees=M.TrainForest(data.Forest.train,count,depth)
+            modelCache.Forest[cacheKey]=trees
+        end
+        return function(row) return M.PredictForest(row,trees) end
+    elseif mode=="Boost" then
+        local rounds,depth=config.Rounds,config.Depth
+        assert(integer(rounds,10,60) and rounds%10==0 and integer(depth,1,3),"Invalid gradient boosting controls")
+        local cacheKey=rounds..":"..depth
+        local model=modelCache.Boost[cacheKey]
+        if not model then
+            model=M.TrainGradientBoosting(data.Boost.train,rounds,depth)
+            modelCache.Boost[cacheKey]=model
+        end
+        return function(row) return M.PredictGradientBoosting(row,model) end
+    end
+    error("Unknown lesson level")
+end
+local function promote(player,state,index)
+    if state.Unlocked>index then return end
+    state.Unlocked=math.min(index+1,4)
+end
+-- Партия урожая = ОДНА строка test-датасета уровня. Листать можно все партии test-датасета;
+-- окончательная проверка (Evaluate) идёт по ВСЕМУ test-датасету уровня, а не по одной партии.
+local function handle(player,action,mode,config,index)
+    if action=="GetState" then return publicState(stateFor(player)) end
+    local state,stage=authorize(player,mode)
+    local total=#data[mode].test
+    if action=="GetBatch" then
+        assert(integer(index,1,total),"Invalid batch index")
+        local row=data[mode].test[index]
+        assert(row,"Batch not found")
+        return {Id=row.id,Features=table.clone(row.f),Index=index,Total=total}
+    end
+    assert(action=="Evaluate" or action=="Simulate","Unknown action")
+    assert(not busy[player],"Model request already running")
+    busy[player]=true
+    local success,result=pcall(function()
+        local predict=classifier(mode,config)
+        if action=="Simulate" then
+            -- «Посмотреть на test-датасете»: прогноз модели для одной выбранной партии
+            assert(integer(index,1,total),"Invalid batch index")
+            local row=data[mode].test[index]
+            assert(row,"Batch not found")
+            local guess,details=predict(row)
+            return {Id=row.id,Guess=M.Labels[guess],Actual=M.Labels[row.y],Details=details,Index=index,Total=total}
+        end
+        -- «Пройти окончательную проверку»: все партии test-датасета уровня
+        local metrics=M.Metrics(data[mode].test,predict)
+        local required=gates[mode]
+        local passed=metrics.Accuracy>=required.Accuracy and metrics.MacroF1>=required.MacroF1
+        if passed then promote(player,state,stage) end
+        return {Metrics=metrics,Success=passed,Required=required,Dataset="test",Total=total,
+            Unlocked=state.Unlocked,Persistent=state.Persistent}
+    end)
+    busy[player]=nil
+    if not success then error(result) end
+    return result
+end
+rpc.OnServerInvoke=handle
+Players.PlayerRemoving:Connect(function(player)
+    progress[player]=nil
+    busy[player]=nil
+end)
+]]></string>
+      </Properties>
+    </Item>
   </Item>
-  <Item class="StarterPlayer" referent="63">
+  <Item class="StarterPlayer" referent="66">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="64">
+    <Item class="StarterPlayerScripts" referent="67">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="65">
+      <Item class="LocalScript" referent="68">
         <Properties>
           <string name="Name">RegressionClient</string>
           <bool name="Disabled">false</bool>
@@ -9576,6 +12896,1490 @@ if RunService:IsStudio() then
 		end,
 	}
 end
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="LocalScript" referent="69">
+        <Properties>
+          <string name="Name">LevelFlowController</string>
+          <string name="Source"><![CDATA[local Players =
+	game:GetService("Players")
+
+
+local ReplicatedStorage =
+	game:GetService(
+		"ReplicatedStorage"
+	)
+
+
+local RunService =
+	game:GetService(
+		"RunService"
+	)
+
+
+local Workspace =
+	game:GetService(
+		"Workspace"
+	)
+
+
+local player =
+	Players.LocalPlayer
+
+
+local playerGui =
+	player:WaitForChild(
+		"PlayerGui"
+	)
+
+
+local playerScripts =
+	player:WaitForChild(
+		"PlayerScripts"
+	)
+
+
+local Config =
+	require(
+		ReplicatedStorage
+			:WaitForChild("Shared")
+			:WaitForChild(
+				"LevelFlowConfig"
+			)
+	)
+
+
+local remotes =
+	ReplicatedStorage
+		:WaitForChild("Remotes")
+
+
+local showRemote =
+	remotes:WaitForChild(
+		"LevelFlowShow"
+	)
+
+
+local continueRemote =
+	remotes:WaitForChild(
+		"LevelFlowContinue"
+	)
+
+
+--------------------------------------------------
+-- UI
+--------------------------------------------------
+
+local gui =
+	playerGui:WaitForChild(
+		"LevelFlowUI"
+	)
+
+
+local status =
+	gui:WaitForChild(
+		"Status"
+	)
+
+
+local levelLabel =
+	status:WaitForChild(
+		"LevelLabel"
+	)
+
+
+local hintLabel =
+	status:WaitForChild(
+		"HintLabel"
+	)
+
+
+local navigation =
+	gui:WaitForChild(
+		"Navigation"
+	)
+
+
+local arrow =
+	navigation:WaitForChild(
+		"Arrow"
+	)
+
+
+local destinationLabel =
+	navigation:WaitForChild(
+		"DestinationLabel"
+	)
+
+
+local distanceLabel =
+	navigation:WaitForChild(
+		"DistanceLabel"
+	)
+
+
+local overlay =
+	gui:WaitForChild(
+		"Overlay"
+	)
+
+
+local card =
+	overlay:WaitForChild(
+		"Card"
+	)
+
+
+local completedLabel =
+	card:WaitForChild(
+		"CompletedLabel"
+	)
+
+
+local nextLabel =
+	card:WaitForChild(
+		"NextLabel"
+	)
+
+
+local continueButton =
+	card:WaitForChild(
+		"ContinueButton"
+	)
+
+
+local skipButton =
+	status:FindFirstChild(
+		"SkipButton"
+	)
+
+
+
+--------------------------------------------------
+-- MAP
+--------------------------------------------------
+
+local levelIndex = {
+
+	regression = 1,
+
+	decision_tree = 2,
+
+	dbscan = 3,
+
+}
+
+
+local levelNames = {
+
+	regression =
+		"РЕГРЕССИЯ",
+
+	decision_tree =
+		"РЕШАЮЩЕЕ ДЕРЕВО",
+
+	dbscan =
+		"КЛАСТЕРИЗАЦИЯ",
+
+}
+
+
+-- RegressionClient здесь нет: клумба и пасека регрессии строятся сразу при входе в игру и видны всегда,
+-- а кнопки модуля сам RegressionClient включает только при ActiveLevel = "regression" (и внутри куба уровня).
+-- Выключать его нельзя: повторное включение LocalScript запускает его заново и строит вторую клумбу.
+local SCRIPT_LEVELS = {
+
+	TreeLevelClient =
+		"decision_tree",
+
+	TreeLevelNavigationController =
+		"decision_tree",
+
+	DBSCAN_RadarClient =
+		"dbscan",
+
+}
+
+
+local ALWAYS_DISABLED = {
+
+	TreeLevelDebugControls =
+		true,
+
+	WorldLessonController =
+		true,
+
+	DataConsoleController =
+		true,
+
+}
+
+
+
+--------------------------------------------------
+-- SCRIPT GATING
+--------------------------------------------------
+
+local function applyScriptState(
+	object,
+	activeLevel
+)
+
+	if not object:IsA(
+		"LocalScript"
+	) then
+
+		return
+
+	end
+
+
+	if ALWAYS_DISABLED[
+		object.Name
+	] then
+
+		object.Enabled =
+			false
+
+		return
+
+	end
+
+
+	local required =
+		SCRIPT_LEVELS[
+			object.Name
+		]
+
+
+	if required then
+
+		object.Enabled =
+			activeLevel
+				== required
+
+	end
+
+end
+
+
+
+local function updateScripts(
+	activeLevel
+)
+
+	for _, object in ipairs(
+		playerScripts:GetDescendants()
+	) do
+
+		applyScriptState(
+			object,
+			activeLevel
+		)
+
+	end
+
+end
+
+
+
+--------------------------------------------------
+-- STATUS
+--------------------------------------------------
+
+local function updateStatus()
+
+	local active =
+		player:GetAttribute(
+			"ActiveLevel"
+		)
+
+
+	local target =
+		player:GetAttribute(
+			"LevelFlowTargetLevel"
+		)
+
+
+	if type(active) == "string"
+		and Config.Levels[active]
+	then
+
+		local index =
+			levelIndex[
+				active
+			]
+			or 1
+
+
+		levelLabel.Text =
+			tostring(index)
+			.. " / 3  •  "
+			.. (
+				levelNames[
+					active
+				]
+				or string.upper(
+					active
+				)
+			)
+
+
+		if active
+			== "regression"
+		then
+
+			hintLabel.Text =
+				"Завершите модуль по регрессии"
+
+
+		elseif active
+			== "decision_tree"
+		then
+
+			hintLabel.Text =
+				"Завершите все 4 подуровня дерева"
+
+
+		elseif active
+			== "dbscan"
+		then
+
+			hintLabel.Text =
+				"Завершите модуль кластеризации"
+
+		end
+
+
+		if skipButton then
+
+			skipButton.Visible =
+				true
+
+		end
+
+
+	else
+
+		levelLabel.Text =
+			"ИДИТЕ К СЛЕДУЮЩЕМУ УРОВНЮ"
+
+
+		hintLabel.Text =
+			"Следуйте по стрелке"
+
+
+		if skipButton then
+
+			skipButton.Visible =
+				false
+
+		end
+
+	end
+
+
+	updateScripts(
+		active or ""
+	)
+
+
+	navigation.Visible =
+		type(target) == "string"
+		and Config.Levels[
+			target
+		] ~= nil
+
+end
+
+
+
+--------------------------------------------------
+-- FIND TARGET ENTRY
+--------------------------------------------------
+
+local function getTargetEntry()
+
+	local target =
+		player:GetAttribute(
+			"LevelFlowTargetLevel"
+		)
+
+
+	if type(target)
+		~= "string"
+	then
+
+		return nil, nil
+	end
+
+
+	local level =
+		Config.Levels[
+			target
+		]
+
+
+	if not level then
+
+		return nil, nil
+
+	end
+
+
+	local entries =
+		Workspace:FindFirstChild(
+			"LevelFlowEntries"
+		)
+
+
+	if not entries then
+
+		return nil, nil
+
+	end
+
+
+	return
+
+		entries:FindFirstChild(
+			level.EntryPoint
+		),
+
+		target
+
+end
+
+
+
+--------------------------------------------------
+-- WORLD DESTINATION MARKER
+--------------------------------------------------
+
+local marker =
+	Instance.new("BillboardGui")
+
+
+marker.Name =
+	"LevelDestinationMarker"
+
+
+marker.Size =
+	UDim2.fromOffset(
+		220,
+		55
+	)
+
+
+marker.StudsOffset =
+	Vector3.new(
+		0,
+		5,
+		0
+	)
+
+
+marker.AlwaysOnTop =
+	true
+
+
+marker.Enabled =
+	false
+
+
+marker.Parent =
+	gui
+
+
+local markerLabel =
+	Instance.new("TextLabel")
+
+
+markerLabel.Size =
+	UDim2.fromScale(
+		1,
+		1
+	)
+
+
+markerLabel.BackgroundColor3 =
+	Color3.fromRGB(
+		24,
+		27,
+		33
+	)
+
+
+markerLabel.BackgroundTransparency =
+	0.1
+
+
+markerLabel.BorderSizePixel =
+	0
+
+
+markerLabel.TextColor3 =
+	Color3.fromRGB(
+		235,
+		190,
+		66
+	)
+
+
+markerLabel.TextSize =
+	18
+
+
+markerLabel.Font =
+	Enum.Font.GothamBold
+
+
+markerLabel.Parent =
+	marker
+
+
+local markerCorner =
+	Instance.new("UICorner")
+
+
+markerCorner.CornerRadius =
+	UDim.new(
+		0,
+		10
+	)
+
+
+markerCorner.Parent =
+	markerLabel
+
+
+
+--------------------------------------------------
+-- ARROW UPDATE
+--------------------------------------------------
+
+RunService.RenderStepped
+	:Connect(
+		function()
+
+			local entry,
+				target =
+				getTargetEntry()
+
+
+			if not entry
+				or not entry:IsA(
+					"BasePart"
+				)
+			then
+
+				navigation.Visible =
+					false
+
+				marker.Enabled =
+					false
+
+				return
+
+			end
+
+
+			navigation.Visible =
+				true
+
+
+			marker.Adornee =
+				entry
+
+
+			marker.Enabled =
+				true
+
+
+			local displayName =
+				Config.Levels[
+					target
+				].Name
+				or target
+
+
+			markerLabel.Text =
+				string.upper(
+					displayName
+				)
+
+
+			destinationLabel.Text =
+				"К УРОВНЮ: "
+				.. string.upper(
+					displayName
+				)
+
+
+
+			--------------------------------
+			-- DISTANCE
+			--------------------------------
+
+			local character =
+				player.Character
+
+
+			local root =
+				character
+				and character
+					:FindFirstChild(
+						"HumanoidRootPart"
+					)
+
+
+			if root then
+
+				local distance =
+					(
+						entry.Position
+						- root.Position
+					).Magnitude
+
+
+				distanceLabel.Text =
+					tostring(
+						math.floor(
+							distance
+							+ 0.5
+						)
+					)
+					.. " м до цели"
+
+			else
+
+				distanceLabel.Text =
+					"Find the marked area"
+
+			end
+
+
+
+			--------------------------------
+			-- DIRECTION RELATIVE TO CAMERA
+			--------------------------------
+
+			local camera =
+				Workspace.CurrentCamera
+
+
+			if not camera then
+				return
+			end
+
+
+			local localPosition =
+				camera.CFrame
+					:PointToObjectSpace(
+						entry.Position
+					)
+
+
+			local angle =
+				math.atan2(
+					localPosition.X,
+					-localPosition.Z
+				)
+
+
+			arrow.Rotation =
+				math.deg(
+					angle
+				)
+
+		end
+	)
+
+
+
+--------------------------------------------------
+-- NEW SCRIPTS
+--------------------------------------------------
+
+playerScripts.DescendantAdded
+	:Connect(
+		function(object)
+
+			task.defer(
+				function()
+
+					if not object.Parent then
+						return
+					end
+
+
+					applyScriptState(
+
+						object,
+
+						player:GetAttribute(
+							"ActiveLevel"
+						)
+							or ""
+
+					)
+
+				end
+			)
+
+		end
+	)
+
+
+
+--------------------------------------------------
+-- ACTIVE/TARGET CHANGES
+--------------------------------------------------
+
+player:GetAttributeChangedSignal(
+	"ActiveLevel"
+)
+:Connect(
+	updateStatus
+)
+
+
+player:GetAttributeChangedSignal(
+	"LevelFlowTargetLevel"
+)
+:Connect(
+	updateStatus
+)
+
+
+
+--------------------------------------------------
+-- COMPLETE UI
+--------------------------------------------------
+
+showRemote.OnClientEvent
+	:Connect(
+		function(data)
+
+			completedLabel.Text =
+				tostring(
+					data.CompletedName
+						or "Level"
+				)
+				.. " completed"
+
+
+			if data.Skipped then
+
+				completedLabel.Text =
+					tostring(
+						data.CompletedName
+							or "Level"
+					)
+					.. " skipped"
+
+			end
+
+
+			if data.IsFinal then
+
+				nextLabel.Text =
+					"Все учебные модули завершены"
+
+				continueButton.Text =
+					"DONE"
+
+			else
+
+				nextLabel.Text =
+					"Next: "
+					.. tostring(
+						data.NextName
+							or data.NextId
+					)
+
+				continueButton.Text =
+					"ПОКАЗАТЬ ПУТЬ →"
+
+			end
+
+
+			overlay:SetAttribute(
+				"IsFinal",
+				data.IsFinal
+			)
+
+
+			overlay.Visible =
+				true
+
+		end
+	)
+
+
+
+--------------------------------------------------
+-- CONTINUE
+--------------------------------------------------
+
+continueButton.MouseButton1Click
+	:Connect(
+		function()
+
+			if overlay:GetAttribute(
+				"IsFinal"
+			) == true
+			then
+
+				overlay.Visible =
+					false
+
+				return
+
+			end
+
+
+			continueRemote:FireServer()
+
+
+			overlay.Visible =
+				false
+
+		end
+	)
+
+
+
+--------------------------------------------------
+-- START
+--------------------------------------------------
+
+overlay.Visible =
+	false
+
+
+updateStatus()
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterGui" referent="70">
+    <Properties>
+      <string name="Name">StarterGui</string>
+    </Properties>
+    <Item class="Folder" referent="71">
+      <Properties>
+        <string name="Name">DecisionTreeLabUI</string>
+      </Properties>
+      <Item class="LocalScript" referent="72">
+        <Properties>
+          <string name="Name">DecisionTreeLabController</string>
+          <string name="Source"><![CDATA[local RS=game:GetService("ReplicatedStorage")
+local M=require(RS:WaitForChild("DecisionTreeLabMath"))
+local rpc=RS:WaitForChild("DecisionTreeLabRPC")
+local lab=workspace:WaitForChild("DecisionTreeLab_2026")
+local prompt=lab:WaitForChild("SorterTerminal"):WaitForChild("OpenDecisionTreeLab")
+local gui=script.Parent
+local labels=M.Labels
+local colors={
+    Color3.fromRGB(53,148,231),Color3.fromRGB(78,185,102),
+    Color3.fromRGB(244,184,47),Color3.fromRGB(229,90,135)}
+local bg=Color3.fromRGB(23,25,31)
+local panel=Color3.fromRGB(39,43,52)
+local warm=Color3.fromRGB(253,195,63)
+local white=Color3.fromRGB(246,247,249)
+local dark=Color3.fromRGB(43,49,58)
+local muted=Color3.fromRGB(167,175,185)
+local green=Color3.fromRGB(63,198,102)
+local selectedId=1
+local nextId=2
+local graph={root=1,nodes={["1"]={kind="leaf",class=1}}}
+local tab="Tree"
+local unlocked=1
+local persistent=false
+local sampleIndex=1
+local batchTotal=20 -- сколько партий в test-датасете уровня (сервер присылает Total)
+local batch
+local metric
+local success=false
+local status="Построй дерево: выбери лист, добавь развилку и настрой обе ветви. Потом пройди окончательную проверку на всём test-датасете уровня."
+local statusColor=muted
+local forestCount,forestDepth=5,3
+local boostRounds,boostDepth=20,2
+local renderMain,renderPanels
+
+local function frame(name,parent,size,pos,color,radius)
+    local x=Instance.new("Frame")
+    x.Name=name; x.Size=size; x.Position=pos; x.BackgroundColor3=color
+    x.BorderSizePixel=0; x.Parent=parent
+    if radius then local corner=Instance.new("UICorner"); corner.CornerRadius=UDim.new(0,radius); corner.Parent=x end
+    return x
+end
+local function label(name,parent,value,size,pos,textSize,color,bold,center)
+    local x=Instance.new("TextLabel")
+    x.Name=name; x.Size=size; x.Position=pos; x.BackgroundTransparency=1
+    x.Text=value; x.TextSize=textSize; x.TextColor3=color
+    x.Font=bold and Enum.Font.GothamBold or Enum.Font.Gotham
+    x.TextWrapped=true
+    x.TextXAlignment=center and Enum.TextXAlignment.Center or Enum.TextXAlignment.Left
+    x.TextYAlignment=Enum.TextYAlignment.Center
+    x.Parent=parent
+    return x
+end
+local function button(name,parent,value,size,pos,color,textColor,callback)
+    local x=Instance.new("TextButton")
+    x.Name=name; x.Size=size; x.Position=pos; x.BackgroundColor3=color
+    x.BorderSizePixel=0; x.Text=value; x.TextColor3=textColor; x.TextSize=15
+    x.Font=Enum.Font.GothamBold; x.TextWrapped=true; x.AutoButtonColor=true
+    x.Parent=parent
+    local corner=Instance.new("UICorner"); corner.CornerRadius=UDim.new(0,9); corner.Parent=x
+    x.MouseButton1Click:Connect(callback)
+    return x
+end
+local function clearGenerated(parent)
+    for _,child in ipairs(parent:GetChildren()) do
+        if not child:IsA("UICorner") and not child:IsA("UIListLayout") then child:Destroy() end
+    end
+end
+local function request(action,mode,config,index)
+    local ok,result=pcall(function() return rpc:InvokeServer(action,mode,config,index) end)
+    if not ok then
+        status="Ошибка сервера: "..tostring(result)
+        statusColor=Color3.fromRGB(243,102,96)
+        if renderPanels then renderPanels() end
+        return nil
+    end
+    return result
+end
+local shade=frame("Shade",gui,UDim2.fromScale(1,1),UDim2.fromScale(0,0),Color3.fromRGB(3,5,8))
+shade.BackgroundTransparency=0.18; shade.Visible=false
+local card=frame("Laboratory",shade,UDim2.new(0.94,0,0.9,0),UDim2.fromScale(0.5,0.5),bg,16)
+card.AnchorPoint=Vector2.new(0.5,0.5)
+local maxSize=Instance.new("UISizeConstraint"); maxSize.MaxSize=Vector2.new(1320,830); maxSize.Parent=card
+label("Title",card,"NECTAR SORTER  ·  ЛАБОРАТОРИЯ ДЕРЕВЬЕВ",UDim2.new(1,-95,0,35),UDim2.fromOffset(22,14),23,warm,true)
+label("Subtitle",card,"От своего дерева решений — к лесу и градиентному бустингу",UDim2.new(1,-95,0,24),UDim2.fromOffset(22,50),14,muted,false)
+button("Close",card,"×",UDim2.fromOffset(40,38),UDim2.new(1,-54,0,18),panel,white,function() shade.Visible=false end)
+local tabs=frame("Tabs",card,UDim2.new(1,-36,0,46),UDim2.fromOffset(18,84),panel,10)
+local main=frame("Main",card,UDim2.new(0.72,-24,1,-222),UDim2.fromOffset(18,140),panel,12)
+local sidebar=Instance.new("ScrollingFrame")
+sidebar.Name="Sidebar"; sidebar.Size=UDim2.new(0.28,-18,1,-222)
+sidebar.Position=UDim2.new(0.72,0,0,140); sidebar.BackgroundColor3=panel
+sidebar.BorderSizePixel=0; sidebar.ScrollBarThickness=6
+sidebar.CanvasSize=UDim2.fromOffset(0,635); sidebar.Parent=card
+local sidebarCorner=Instance.new("UICorner"); sidebarCorner.CornerRadius=UDim.new(0,12); sidebarCorner.Parent=sidebar
+local footer=frame("Footer",card,UDim2.new(1,-36,0,58),UDim2.new(0,18,1,-70),panel,10)
+local canvas=Instance.new("ScrollingFrame")
+canvas.Name="TreeCanvas"; canvas.Size=UDim2.new(1,-210,1,-24)
+canvas.Position=UDim2.fromOffset(12,12); canvas.BackgroundColor3=white
+canvas.BorderSizePixel=0; canvas.ScrollBarThickness=8
+canvas.ScrollingDirection=Enum.ScrollingDirection.XY
+canvas.CanvasSize=UDim2.fromOffset(680,480); canvas.Parent=main
+local canvasCorner=Instance.new("UICorner"); canvasCorner.CornerRadius=UDim.new(0,10); canvasCorner.Parent=canvas
+local inspector=frame("TreeInspector",main,UDim2.new(0,184,1,-24),UDim2.new(1,-196,0,12),white,10)
+local alternate=Instance.new("ScrollingFrame")
+alternate.Name="ModelControls"; alternate.Size=UDim2.new(1,-24,1,-24)
+alternate.Position=UDim2.fromOffset(12,12); alternate.BackgroundTransparency=1
+alternate.BorderSizePixel=0; alternate.ScrollBarThickness=6
+alternate.AutomaticCanvasSize=Enum.AutomaticSize.Y; alternate.CanvasSize=UDim2.fromOffset(0,0)
+alternate.Visible=false; alternate.Parent=main
+local alternateLayout=Instance.new("UIListLayout")
+alternateLayout.Padding=UDim.new(0,10); alternateLayout.SortOrder=Enum.SortOrder.LayoutOrder
+alternateLayout.Parent=alternate
+label("BatchTitle",sidebar,"ПАРТИЯ УРОЖАЯ (1 строка test-датасета)",UDim2.new(1,-26,0,29),UDim2.fromOffset(14,12),16,warm,true)
+local batchText=label("BatchText",sidebar,"",UDim2.new(1,-28,0,240),UDim2.fromOffset(14,48),14,white,false)
+batchText.TextYAlignment=Enum.TextYAlignment.Top
+local metricsText=label("Metrics",sidebar,"",UDim2.new(1,-28,0,190),UDim2.fromOffset(14,290),14,white,false)
+metricsText.TextYAlignment=Enum.TextYAlignment.Top
+local statusText=label("Status",sidebar,"",UDim2.new(1,-28,0,120),UDim2.fromOffset(14,490),14,muted,false)
+statusText.TextYAlignment=Enum.TextYAlignment.Top
+local tabDefs={{"Tree","1 · ДЕРЕВО"},{"Forest","2 · СЛУЧАЙНЫЙ ЛЕС"},{"Boost","3 · ГРАДИЕНТНЫЙ БУСТИНГ"}}
+for i,item in ipairs(tabDefs) do
+    button("Tab"..item[1],tabs,item[2],UDim2.new(1/3,-8,0,34),UDim2.new((i-1)/3,5,0,6),dark,white,function()
+        if i>unlocked then
+            status="Уровень закрыт: сначала получи зелёный SUCCESS на предыдущем."
+            statusColor=Color3.fromRGB(243,180,78)
+            renderPanels()
+            return
+        end
+        tab=item[1]; sampleIndex=1; metric=nil; success=false
+        local value=request("GetBatch",tab,nil,sampleIndex)
+        if value then batch=value; batchTotal=value.Total or batchTotal end
+        status="Уровень "..i.." открыт."
+        statusColor=muted
+        renderMain(); renderPanels()
+    end)
+end
+
+local function freshGraph()
+    graph={root=1,nodes={["1"]={kind="leaf",class=1}}}
+    selectedId=1; nextId=2; metric=nil; success=false
+end
+local function prune(id)
+    local node=graph.nodes[tostring(id)]
+    if not node then return end
+    if node.kind=="split" then prune(node.yes); prune(node.no) end
+    graph.nodes[tostring(id)]=nil
+end
+local function currentNode()
+    return graph.nodes[tostring(selectedId)]
+end
+local function changeNodeToLeaf()
+    local node=currentNode()
+    if node.kind=="split" then prune(node.yes); prune(node.no) end
+    graph.nodes[tostring(selectedId)]={kind="leaf",class=1}
+    metric=nil; success=false
+    renderMain(); renderPanels()
+end
+local function addSplit()
+    local node=currentNode()
+    if node.kind~="leaf" then
+        status="Сначала выбери лист, который нужно превратить в развилку."
+        statusColor=Color3.fromRGB(243,180,78); renderPanels(); return
+    end
+    local total=0
+    for _ in pairs(graph.nodes) do total=total+1 end
+    if total+2>255 then
+        status="Достигнут технический предел: 255 узлов дерева."
+        statusColor=Color3.fromRGB(243,180,78); renderPanels(); return
+    end
+    local yesId,noId=nextId,nextId+1
+    nextId=nextId+2
+    graph.nodes[tostring(selectedId)]={kind="split",feature=1,op=">",threshold=38,yes=yesId,no=noId}
+    graph.nodes[tostring(yesId)]={kind="leaf",class=1}
+    graph.nodes[tostring(noId)]={kind="leaf",class=2}
+    metric=nil; success=false
+    renderMain(); renderPanels()
+end
+
+local function selectedDepth(id,target,depth)
+    if id==target then return depth end
+    local node=graph.nodes[tostring(id)]
+    if node and node.kind=="split" then
+        return selectedDepth(node.yes,target,depth+1) or selectedDepth(node.no,target,depth+1)
+    end
+    return nil
+end
+local function line(parent,x1,y1,x2,y2,color)
+    local dx,dy=x2-x1,y2-y1
+    local length=math.sqrt(dx*dx+dy*dy)
+    local part=frame("Connector",parent,UDim2.fromOffset(length,2),
+        UDim2.fromOffset((x1+x2)/2,(y1+y2)/2),color)
+    part.AnchorPoint=Vector2.new(0.5,0.5)
+    part.Rotation=math.deg(math.atan2(dy,dx))
+    part.ZIndex=1
+end
+local function pill(parent,value,x,y,color)
+    local item=frame("BranchLabel",parent,UDim2.fromOffset(40,22),UDim2.fromOffset(x,y),color,11)
+    item.ZIndex=3
+    label("Text",item,value,UDim2.fromScale(1,1),UDim2.fromScale(0,0),12,dark,true,true).ZIndex=4
+end
+local function renderTree()
+    clearGenerated(canvas)
+    local locations={}
+    local leaves=0
+    local deepest=0
+    local function place(id,depth)
+        deepest=math.max(deepest,depth)
+        local node=graph.nodes[tostring(id)]
+        local x
+        if node.kind=="leaf" then
+            leaves=leaves+1
+            x=110+(leaves-1)*188
+        else
+            local yesX=place(node.yes,depth+1)
+            local noX=place(node.no,depth+1)
+            x=(yesX+noX)/2
+        end
+        locations[id]={x=x,y=38+(depth-1)*120}
+        return x
+    end
+    place(graph.root,1)
+    canvas.CanvasSize=UDim2.fromOffset(math.max(650,leaves*188+80),math.max(430,deepest*120+35))
+    for key,node in pairs(graph.nodes) do
+        if node.kind=="split" then
+            local id=tonumber(key)
+            local origin=locations[id]
+            local yesLoc,noLoc=locations[node.yes],locations[node.no]
+            local startY=origin.y+73
+            line(canvas,origin.x,startY,yesLoc.x,yesLoc.y,Color3.fromRGB(102,117,133))
+            line(canvas,origin.x,startY,noLoc.x,noLoc.y,Color3.fromRGB(102,117,133))
+            pill(canvas,"ДА",(origin.x+yesLoc.x)/2-20,(startY+yesLoc.y)/2-16,Color3.fromRGB(176,245,176))
+            pill(canvas,"НЕТ",(origin.x+noLoc.x)/2-20,(startY+noLoc.y)/2-16,Color3.fromRGB(255,184,199))
+        end
+    end
+    for key,node in pairs(graph.nodes) do
+        local id=tonumber(key)
+        local location=locations[id]
+        local color=node.kind=="leaf" and colors[node.class] or Color3.fromRGB(242,243,246)
+        local tile=frame("Node"..key,canvas,UDim2.fromOffset(154,70),
+            UDim2.fromOffset(location.x-77,location.y),color,11)
+        tile.ZIndex=5
+        local outline=Instance.new("UIStroke")
+        outline.Color=id==selectedId and warm or Color3.fromRGB(111,125,141)
+        outline.Thickness=id==selectedId and 4 or 2
+        outline.Parent=tile
+        local caption
+        if node.kind=="leaf" then caption="🍯  ОБРАБОТЧИК "..labels[node.class]
+        else
+            local meta=M.Features[node.feature]
+            caption=meta.Name.." "..node.op.." "..string.format("%."..meta.Decimals.."f",node.threshold)
+        end
+        button("Select",tile,caption,UDim2.fromScale(1,1),UDim2.fromScale(0,0),
+            color,node.kind=="leaf" and white or dark,function()
+                selectedId=id
+                renderMain()
+            end).ZIndex=6
+    end
+end
+local function renderInspector()
+    clearGenerated(inspector)
+    label("Title",inspector,"TREE BUILDER",UDim2.new(1,-16,0,30),UDim2.fromOffset(8,8),15,dark,true)
+    label("Help",inspector,"Выбери узел. Ветви ДА и НЕТ настраиваются отдельно.",
+        UDim2.new(1,-16,0,55),UDim2.fromOffset(8,40),12,Color3.fromRGB(95,105,118),false)
+    local node=currentNode()
+    if node.kind=="split" then
+        local meta=M.Features[node.feature]
+        label("FeatureLabel",inspector,"ПРИЗНАК",UDim2.new(1,-16,0,22),UDim2.fromOffset(8,102),12,dark,true)
+        button("Feature",inspector,meta.Name.."  ▾",UDim2.new(1,-16,0,38),UDim2.fromOffset(8,126),
+            Color3.fromRGB(227,233,239),dark,function()
+                node.feature=node.feature%#M.Features+1
+                node.threshold=math.floor((M.Features[node.feature].Min+M.Features[node.feature].Max)/2*100+0.5)/100
+                metric=nil; success=false; renderMain(); renderPanels()
+            end)
+        label("ConditionLabel",inspector,"УСЛОВИЕ",UDim2.new(1,-16,0,22),UDim2.fromOffset(8,170),12,dark,true)
+        local operations={">",">=","<","<="}
+        button("Operator",inspector,node.op,UDim2.fromOffset(48,38),UDim2.fromOffset(8,194),
+            Color3.fromRGB(227,233,239),dark,function()
+                for i,op in ipairs(operations) do
+                    if op==node.op then node.op=operations[i%4+1]; break end
+                end
+                metric=nil; success=false; renderMain(); renderPanels()
+            end)
+        local input=Instance.new("TextBox")
+        input.Name="Threshold"; input.Size=UDim2.new(1,-72,0,38)
+        input.Position=UDim2.fromOffset(64,194)
+        input.BackgroundColor3=Color3.fromRGB(227,233,239)
+        input.BorderSizePixel=0; input.Text=tostring(node.threshold)
+        input.TextSize=15; input.TextColor3=dark; input.Font=Enum.Font.Gotham
+        input.ClearTextOnFocus=false; input.Parent=inspector
+        local corner=Instance.new("UICorner"); corner.CornerRadius=UDim.new(0,8); corner.Parent=input
+        input.FocusLost:Connect(function()
+            local value=tonumber(input.Text)
+            local active=M.Features[node.feature]
+            if value and value>=active.Min and value<=active.Max then
+                node.threshold=value; metric=nil; success=false
+                renderMain(); renderPanels()
+            else
+                status="Порог должен быть от "..active.Min.." до "..active.Max.."."
+                statusColor=Color3.fromRGB(237,105,96)
+                input.Text=tostring(node.threshold); renderPanels()
+            end
+        end)
+        label("BranchHint",inspector,"Нажми лист на схеме, чтобы выбрать обработчик A/B/C/D.",
+            UDim2.new(1,-16,0,78),UDim2.fromOffset(8,238),12,Color3.fromRGB(95,105,118),false)
+    else
+        label("ClassLabel",inspector,"ОБРАБОТЧИК ЛИСТА",UDim2.new(1,-16,0,28),UDim2.fromOffset(8,110),12,dark,true)
+        for i=1,4 do
+            local row=math.floor((i-1)/2)
+            local col=(i-1)%2
+            button("Class"..i,inspector,labels[i],UDim2.new(0.5,-12,0,40),
+                UDim2.new(col*0.5,8,0,143+row*48),colors[i],white,function()
+                    node.class=i; metric=nil; success=false
+                    renderMain(); renderPanels()
+                end)
+        end
+        label("LeafHint",inspector,"Этот лист — конечный маршрут партии нектара.",
+            UDim2.new(1,-16,0,70),UDim2.fromOffset(8,250),12,Color3.fromRGB(95,105,118),false)
+    end
+    button("AddSplit",inspector,"＋ Развилка",UDim2.new(1,-16,0,38),UDim2.new(0,8,1,-177),
+        Color3.fromRGB(255,213,99),dark,function()
+            if (selectedDepth(graph.root,selectedId,1) or 32)>=32 then
+                status="Технический предел глубины — 32 уровня."
+                statusColor=Color3.fromRGB(243,180,78); renderPanels(); return
+            end
+            addSplit()
+        end)
+    button("AddLeaf",inspector,"＋ Лист",UDim2.new(1,-16,0,38),UDim2.new(0,8,1,-133),
+        Color3.fromRGB(225,232,239),dark,changeNodeToLeaf)
+    button("Delete",inspector,"Удалить ветку",UDim2.new(1,-16,0,38),UDim2.new(0,8,1,-89),
+        Color3.fromRGB(225,232,239),dark,changeNodeToLeaf)
+    button("Reset",inspector,"Сбросить дерево",UDim2.new(1,-16,0,38),UDim2.new(0,8,1,-45),
+        Color3.fromRGB(225,232,239),dark,function()
+            freshGraph(); renderMain(); renderPanels()
+        end)
+end
+
+local function alternateLine(value,height,color,bold)
+    local row=frame("Info",alternate,UDim2.new(1,-12,0,height),UDim2.fromOffset(0,0),dark,9)
+    row.LayoutOrder=#alternate:GetChildren()+1
+    label("Text",row,value,UDim2.new(1,-26,1,-8),UDim2.fromOffset(13,4),
+        16,color or white,bold)
+    return row
+end
+local function alternateControl(title,value,down,up)
+    local row=frame("Control",alternate,UDim2.new(1,-12,0,65),UDim2.fromOffset(0,0),dark,9)
+    row.LayoutOrder=#alternate:GetChildren()+1
+    label("Caption",row,title,UDim2.new(1,-180,1,0),UDim2.fromOffset(14,0),16,white,true)
+    button("Minus",row,"−",UDim2.fromOffset(38,38),UDim2.new(1,-154,0,13),panel,white,down)
+    label("Value",row,tostring(value),UDim2.fromOffset(52,38),UDim2.new(1,-108,0,13),18,warm,true,true)
+    button("Plus",row,"+",UDim2.fromOffset(38,38),UDim2.new(1,-48,0,13),panel,white,up)
+end
+local function configuration()
+    if tab=="Tree" then return {Graph=graph} end
+    if tab=="Forest" then return {Count=forestCount,Depth=forestDepth} end
+    return {Rounds=boostRounds,Depth=boostDepth}
+end
+-- «Пройти окончательную проверку»: сервер прогоняет модель по ВСЕМ партиям test-датасета уровня
+local function evaluate()
+    status="Окончательная проверка: модель сортирует все "..batchTotal.." партий test-датасета уровня..."
+    statusColor=muted; renderPanels()
+    local result=request("Evaluate",tab,configuration())
+    if not result then return end
+    metric=result.Metrics
+    success=result.Success
+    unlocked=result.Unlocked
+    persistent=result.Persistent
+    if success then
+        status="SUCCESS — окончательная проверка пройдена на всех "..metric.Total.." партиях! "..(unlocked<=3 and "Следующий уровень открыт." or "Все уровни пройдены.")
+        statusColor=green
+    else
+        status="Окончательная проверка не пройдена ("..metric.Total.." партий). Измени модель и повтори."
+        statusColor=Color3.fromRGB(243,180,78)
+    end
+    renderPanels()
+end
+local function showBeacon(letter)
+    local beacon=lab:FindFirstChild("ClassBeacon_"..letter)
+    if not beacon then return end
+    local highlight=Instance.new("Highlight")
+    local index=table.find(labels,letter) or 1
+    highlight.FillColor=colors[index]
+    highlight.OutlineColor=Color3.new(1,1,1)
+    highlight.FillTransparency=0.15
+    highlight.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent=beacon
+    task.delay(2,function() if highlight.Parent then highlight:Destroy() end end)
+end
+-- «Посмотреть на test-датасете»: прогноз модели для ОДНОЙ выбранной партии (одной строки датасета)
+local function simulate()
+    status="Модель сортирует партию "..sampleIndex.." из "..batchTotal.."..."
+    statusColor=muted; renderPanels()
+    local result=request("Simulate",tab,configuration(),sampleIndex)
+    if not result then return end
+    local verdict=result.Guess==result.Actual and "верно" or "ошибка"
+    status="Партия "..result.Id.." ("..sampleIndex.." из "..batchTotal.."): маршрут "..result.Guess.."; истинный класс "..result.Actual.." — "..verdict..
+        ".\nЭто одна партия — одна строка датасета. Чтобы пройти уровень, нужна окончательная проверка по всем "..batchTotal.." партиям."
+    statusColor=result.Guess==result.Actual and green or Color3.fromRGB(243,180,78)
+    showBeacon(result.Guess)
+    renderPanels()
+end
+-- Подвал: ◀ ▶ — листать партии урожая test-датасета; «Посмотреть» — прогноз для одной партии;
+-- «Окончательная проверка» — все партии test-датасета уровня (только она открывает следующий уровень).
+local function stepBatch(delta)
+    sampleIndex=(sampleIndex-1+delta)%batchTotal+1
+    local value=request("GetBatch",tab,nil,sampleIndex)
+    if value then
+        batch=value
+        batchTotal=value.Total or batchTotal
+        status="Партия "..value.Id.." ("..sampleIndex.." из "..batchTotal.."). Истинный класс скрыт, пока модель её не отсортирует."
+        statusColor=muted
+        renderPanels()
+    end
+end
+button("Prev",footer,"◀ ПАРТИЯ",UDim2.new(0.13,-10,0,40),UDim2.fromOffset(10,9),
+    Color3.fromRGB(74,80,90),white,function() stepBatch(-1) end)
+button("Next",footer,"ПАРТИЯ ▶",UDim2.new(0.13,-10,0,40),UDim2.new(0.13,5,0,9),
+    Color3.fromRGB(74,80,90),white,function() stepBatch(1) end)
+button("Simulate",footer,"ПОСМОТРЕТЬ НА TEST-ДАТАСЕТЕ",UDim2.new(0.34,-10,0,40),UDim2.new(0.26,0,0,9),
+    Color3.fromRGB(97,114,84),white,simulate)
+button("Evaluate",footer,"ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ",UDim2.new(0.40,-10,0,40),UDim2.new(0.60,0,0,9),
+    Color3.fromRGB(196,139,34),dark,evaluate)
+
+renderMain=function()
+    local isTree=tab=="Tree"
+    canvas.Visible=isTree; inspector.Visible=isTree; alternate.Visible=not isTree
+    if isTree then
+        renderTree(); renderInspector()
+        return
+    end
+    clearGenerated(alternate)
+    if tab=="Forest" then
+        alternateLine("2 / СЛУЧАЙНЫЙ ЛЕС",52,warm,true)
+        alternateLine("Каждое дерево учится на случайной выборке из 1080 учебных партий. На каждой развилке оно рассматривает случайные признаки. Итог — большинство голосов.",90,white,false)
+        alternateControl("Деревья",forestCount,function()
+            forestCount=math.max(3,forestCount-2); metric=nil; success=false; renderMain(); renderPanels()
+        end,function()
+            forestCount=math.min(11,forestCount+2); metric=nil; success=false; renderMain(); renderPanels()
+        end)
+        alternateControl("Глубина",forestDepth,function()
+            forestDepth=math.max(2,forestDepth-1); metric=nil; success=false; renderMain(); renderPanels()
+        end,function()
+            forestDepth=math.min(5,forestDepth+1); metric=nil; success=false; renderMain(); renderPanels()
+        end)
+        local row=frame("Train",alternate,UDim2.new(1,-12,0,64),UDim2.fromOffset(0,0),dark,9)
+        row.LayoutOrder=#alternate:GetChildren()+1
+        button("Start",row,"ОБУЧИТЬ ЛЕС И ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ",UDim2.new(1,-24,0,42),UDim2.fromOffset(12,11),
+            Color3.fromRGB(196,139,34),dark,evaluate)
+        alternateLine("Для SUCCESS нужны точность ≥78% и Macro-F1 ≥0,75 на всём test-датасете уровня ("..batchTotal.." партий). Увеличение глубины и числа деревьев расходует больше вычислений.",83,muted,false)
+    else
+        alternateLine("3 / ГРАДИЕНТНЫЙ БУСТИНГ",52,warm,true)
+        alternateLine("Настоящий многоклассовый gradient boosting: небольшие регрессионные деревья последовательно исправляют ошибки вероятностей классов. Источник — отдельный CSV из 3200 партий.",94,white,false)
+        alternateControl("Этапы",boostRounds,function()
+            boostRounds=math.max(10,boostRounds-10); metric=nil; success=false; renderMain(); renderPanels()
+        end,function()
+            boostRounds=math.min(60,boostRounds+10); metric=nil; success=false; renderMain(); renderPanels()
+        end)
+        alternateControl("Глубина",boostDepth,function()
+            boostDepth=math.max(1,boostDepth-1); metric=nil; success=false; renderMain(); renderPanels()
+        end,function()
+            boostDepth=math.min(3,boostDepth+1); metric=nil; success=false; renderMain(); renderPanels()
+        end)
+        local row=frame("Train",alternate,UDim2.new(1,-12,0,64),UDim2.fromOffset(0,0),dark,9)
+        row.LayoutOrder=#alternate:GetChildren()+1
+        button("Start",row,"ОБУЧИТЬ БУСТИНГ И ПРОЙТИ ОКОНЧАТЕЛЬНУЮ ПРОВЕРКУ",UDim2.new(1,-24,0,42),UDim2.fromOffset(12,11),
+            Color3.fromRGB(196,139,34),dark,evaluate)
+        alternateLine("Для SUCCESS нужны точность ≥70% и Macro-F1 ≥0,65 на всём test-датасете уровня ("..batchTotal.." партий). Больше этапов требуют больше вычислений.",80,muted,false)
+    end
+end
+renderPanels=function()
+    for i,item in ipairs(tabDefs) do
+        local control=tabs:FindFirstChild("Tab"..item[1])
+        if control then
+            control.Text=(i>unlocked and "🔒 " or "")..item[2]
+            control.BackgroundColor3=tab==item[1] and Color3.fromRGB(204,145,35) or dark
+            control.TextColor3=tab==item[1] and dark or (i>unlocked and muted or white)
+        end
+    end
+    if batch then
+        local f=batch.Features
+        batchText.Text=string.format("Партия %d из %d · ID %s\n(одна строка test-датасета)\n\nВода             %.2f%%\nСахар           %.2f%%\nКислотность   %.3f\nВязкость        %.3f\nТемпература %.2f°C\nАромат           %.3f\nЦвет               %.3f\nПыльца            %.3f",
+            sampleIndex,batchTotal,batch.Id,f[1],f[2],f[3],f[4],f[5],f[6],f[7],f[8])
+    end
+    if metric then
+        metricsText.Text=string.format("ОКОНЧАТЕЛЬНАЯ ПРОВЕРКА\nвесь test-датасет уровня · %d партий\nТочность: %.1f%% (%d/%d)\nMacro-F1: %.3f\n\nF1: A %.2f · B %.2f\n     C %.2f · D %.2f",
+            metric.Total,metric.Accuracy*100,metric.Correct,metric.Total,
+            metric.MacroF1,metric.ByClass[1],metric.ByClass[2],metric.ByClass[3],metric.ByClass[4])
+    else
+        metricsText.Text="ОКОНЧАТЕЛЬНАЯ ПРОВЕРКА\n\nНажми «Пройти окончательную проверку»: модель отсортирует все "..batchTotal.." партий test-датасета уровня."
+    end
+    -- прогресс лаборатории намеренно не сохраняется между заходами
+    statusText.Text=status
+    statusText.TextColor3=statusColor
+end
+local initial=request("GetState")
+if initial then unlocked=initial.Unlocked; persistent=initial.Persistent end
+batch=request("GetBatch","Tree",nil,1)
+if batch then batchTotal=batch.Total or batchTotal end
+renderMain(); renderPanels()
+local openButton=button("OpenLab",gui,"ЛАБОРАТОРИЯ ДЕРЕВЬЕВ",UDim2.fromOffset(255,45),
+    UDim2.new(0,18,1,-62),Color3.fromRGB(205,146,35),dark,function() shade.Visible=true end)
+openButton.ZIndex=2
+prompt.Triggered:Connect(function() shade.Visible=true end)
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="LocalScript" referent="73">
+        <Properties>
+          <string name="Name">TreeCriteriaGuideController</string>
+          <string name="Source"><![CDATA[local gui=script.Parent
+local function child(parent,name)
+    local found=parent:WaitForChild(name,30)
+    assert(found,"Criteria guide could not find "..name)
+    return found
+end
+local shade=child(gui,"Shade")
+local card=child(shade,"Laboratory")
+local sidebar=child(card,"Sidebar")
+local tabs=child(card,"Tabs")
+local treeTab=child(tabs,"TabTree")
+local batchTitle=child(sidebar,"BatchTitle")
+local batchText=child(sidebar,"BatchText")
+local metricsText=child(sidebar,"Metrics")
+local statusText=child(sidebar,"Status")
+
+if sidebar:FindFirstChild("TreeCriteriaGuide") then return end
+
+local function frame(name,parent,size,position,color,radius)
+    local item=Instance.new("Frame")
+    item.Name=name
+    item.Size=size
+    item.Position=position
+    item.BackgroundColor3=color
+    item.BorderSizePixel=0
+    item.Parent=parent
+    if radius then
+        local corner=Instance.new("UICorner")
+        corner.CornerRadius=UDim.new(0,radius)
+        corner.Parent=item
+    end
+    return item
+end
+local function label(name,parent,value,size,position,textSize,color,bold)
+    local item=Instance.new("TextLabel")
+    item.Name=name
+    item.Size=size
+    item.Position=position
+    item.BackgroundTransparency=1
+    item.Text=value
+    item.TextColor3=color
+    item.TextSize=textSize
+    item.TextScaled=false
+    item.TextWrapped=true
+    item.Font=bold and Enum.Font.GothamBold or Enum.Font.Gotham
+    item.TextXAlignment=Enum.TextXAlignment.Left
+    item.TextYAlignment=Enum.TextYAlignment.Center
+    item.Parent=parent
+    return item
+end
+
+local white=Color3.fromRGB(246,247,249)
+local muted=Color3.fromRGB(185,192,201)
+local amber=Color3.fromRGB(253,195,63)
+local guide=frame("TreeCriteriaGuide",sidebar,UDim2.new(1,-20,0,372),
+    UDim2.fromOffset(10,10),Color3.fromRGB(47,52,61),10)
+label("Heading",guide,"КРИТЕРИИ СОРТИРОВЩИКОВ",UDim2.new(1,-20,0,25),
+    UDim2.fromOffset(10,8),15,amber,true)
+label("Intro",guide,"Какие партии принимает каждый выход:",UDim2.new(1,-20,0,18),
+    UDim2.fromOffset(10,32),12,muted,false)
+
+local rules={
+    {"A","вода > 38%",Color3.fromRGB(53,148,231),54,45},
+    {"B","вода ≤ 38%\nсахар < 60%",Color3.fromRGB(78,185,102),103,55},
+    {"C","вода ≤ 38%\nсахар ≥ 60%\nкислотность < 4,2",Color3.fromRGB(244,184,47),162,70},
+    {"D","вода ≤ 38%\nсахар ≥ 60%\nкислотность ≥ 4,2",Color3.fromRGB(229,90,135),236,70},
+}
+for _,rule in ipairs(rules) do
+    local letter,value,color,y,height=rule[1],rule[2],rule[3],rule[4],rule[5]
+    local row=frame("Sorter"..letter,guide,UDim2.new(1,-20,0,height),
+        UDim2.fromOffset(10,y),Color3.fromRGB(33,38,47),7)
+    frame("Color",row,UDim2.fromOffset(5,height),UDim2.fromOffset(0,0),color,3)
+    label("Letter",row,letter,UDim2.fromOffset(25,height),UDim2.fromOffset(12,0),18,color,true)
+    label("Rule",row,value,UDim2.new(1,-45,1,-4),UDim2.fromOffset(42,2),13,white,false)
+end
+local note=label("Note",guide,
+    "Это учебные ориентиры. В CSV есть исключения; окончательная проверка — по всему test-датасету уровня.",
+    UDim2.new(1,-20,0,55),UDim2.fromOffset(10,310),12,muted,false)
+note.TextYAlignment=Enum.TextYAlignment.Top
+
+local activeColor=Color3.fromRGB(204,145,35)
+local lastActive=nil
+local function sync()
+    local active=treeTab.BackgroundColor3==activeColor
+    if active==lastActive then return end
+    lastActive=active
+    local shift=active and 382 or 0
+    guide.Visible=active
+    batchTitle.Position=UDim2.fromOffset(14,12+shift)
+    batchText.Position=UDim2.fromOffset(14,48+shift)
+    metricsText.Position=UDim2.fromOffset(14,290+shift)
+    statusText.Position=UDim2.fromOffset(14,490+shift)
+    sidebar.CanvasSize=UDim2.fromOffset(0,635+shift)
+    sidebar.CanvasPosition=Vector2.new(0,0)
+end
+treeTab:GetPropertyChangedSignal("BackgroundColor3"):Connect(sync)
+sync()
 ]]></string>
         </Properties>
       </Item>

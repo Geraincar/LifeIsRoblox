@@ -181,10 +181,10 @@ local levelNames = {
 }
 
 
+-- RegressionClient здесь нет: клумба и пасека регрессии строятся сразу при входе в игру и видны всегда,
+-- а кнопки модуля сам RegressionClient включает только при ActiveLevel = "regression" (и внутри куба уровня).
+-- Выключать его нельзя: повторное включение LocalScript запускает его заново и строит вторую клумбу.
 local SCRIPT_LEVELS = {
-
-	RegressionClient =
-		"regression",
 
 	TreeLevelClient =
 		"decision_tree",

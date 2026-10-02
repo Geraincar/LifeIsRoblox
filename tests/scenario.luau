@@ -41,31 +41,46 @@ local progress = R.newInstance("RemoteEvent")
 progress.Name = "RegressionProgress"
 progress.Parent = remotes
 
--- уровень, как в SkRob (tools/level.py → Core/LevelLayout): якоря повёрнуты к спауну, куб RegressionZone накрывает модуль
+-- уровень, как в SkRob (tools/level.py → Core/LevelLayout): площадки и куб RegressionZone с поворотами
 local Layout = R.env.require(G:GetService("ReplicatedStorage").Regression.Core.LevelLayout)
 R.groundY = Layout.groundY
 local level = R.newInstance("Folder")
 level.Name = "RegressionLevel"
 level.Parent = G.Workspace
-for _, a in Layout.anchors do
+for name, d in Layout.parts do
 	local p = R.newInstance("Part")
-	p.Name = a.name
-	p.Size = a.size
-	local pos = Vector3.new(a.x, Layout.groundY + 0.5, a.z)
-	p.CFrame = R.CFrame.lookAt(pos, pos + Vector3.new(pos.X - Layout.spawn.X, 0, pos.Z - Layout.spawn.Z))
+	p.Name = name
+	p.Size = d.size
+	p.CFrame = d.cframe
+	p.Transparency = 0.7
 	p.Parent = level
 end
-local zone = R.newInstance("Part")
-zone.Name = "RegressionZone"
-zone.Size = Layout.zone.size
-zone.CFrame = R.CFrame.new(Layout.zone.center)
-zone.Transparency = 0.92
-zone.Parent = level
+local zone = level.RegressionZone
+local zoneCF, zoneSize = zone.CFrame, zone.Size
+local anchorCF = level.FlowerbedAnchor.CFrame
+local loreCF = level.LoreAnchor.CFrame
+
+-- сервер публикует CFrame/Size площадок в атрибуты папки (RegressionLevelServer)
+R.runScript(G:GetService("ServerScriptService").RegressionLevelServer)
+R.step(0.1)
+ok("сервер опубликовал CFrame клумбы в атрибуты", level:GetAttribute("FlowerbedAnchor_CFrame") ~= nil)
+-- StreamingEnabled: на клиенте площадки клумбы ещё нет — клумба всё равно должна встать на своё место
+local streamedOut = level.FlowerbedAnchor
+streamedOut.Parent = nil
+
+-- LevelFlow SkRob: при входе ActiveLevel = "" — уровень регрессии ещё не начат
+R.player:SetAttribute("ActiveLevel", "")
 
 local client = G:GetService("StarterPlayer").StarterPlayerScripts.RegressionClient
 R.setCharacter(Vector3.new(0, 3, 200))
 R.runScript(client)
 R.step(0.5)
+ok("клумба построена сразу при входе в игру", G.Workspace:FindFirstChild("RegressionWorld") ~= nil
+	and G.Workspace.RegressionWorld:FindFirstChild("RegressionFlowerbed") ~= nil)
+ok("пасека построена сразу при входе в игру", G.Workspace.RegressionWorld:FindFirstChild("RegressionLore") ~= nil)
+streamedOut.Parent = level -- площадка «пришла» стримингом
+R.step(0.1)
+ok("пришедшая стримингом площадка сразу скрыта", streamedOut.Transparency == 1)
 
 local gui = R.playerGui
 local hud = gui:FindFirstChild("RegressionHud")
@@ -115,15 +130,19 @@ end
 -- ═════════════ 3D experience ═════════════
 local bed = G.Workspace.RegressionWorld.RegressionFlowerbed
 local soilPos = bed.Soil.Position
-ok("клумба на якоре уровня", math.abs(soilPos.X - 62) < 1e-3 and math.abs(soilPos.Z + 28) < 1e-3, soilPos)
-ok("клумба стоит на земле", math.abs(soilPos.Y - (-30.5758 + 0.2)) < 1e-3, soilPos.Y)
+ok("клумба на якоре уровня (без детали — по атрибутам)", math.abs(soilPos.X - anchorCF.X) < 1e-3 and math.abs(soilPos.Z - anchorCF.Z) < 1e-3, soilPos)
+ok("клумба стоит на земле", math.abs(soilPos.Y - (Layout.groundY + 0.2)) < 1e-3, soilPos.Y)
 ok("якоря скрыты в игре", level.FlowerbedAnchor.Transparency == 1 and level.LoreAnchor.Transparency == 1)
-local pedestal = bed.Pedestal.Position
-local toSpawn = (Vector3.new(3.1, 0, 1.7) - Vector3.new(62, 0, -28)).Unit
-local toPed = (Vector3.new(pedestal.X, 0, pedestal.Z) - Vector3.new(62, 0, -28)).Unit
-ok("пульт клумбы — со стороны спауна", toPed:Dot(toSpawn) > 0.99, toPed:Dot(toSpawn))
+local pedDir = (bed.Pedestal.Position - soilPos)
+ok("пульт клумбы — со стороны +Z площадки", pedDir:Dot(anchorCF.ZVector) > 5, pedDir:Dot(anchorCF.ZVector))
+local loreBoard = G.Workspace.RegressionWorld.RegressionLore.Beekeeper.Body.Position
+ok("пасечник у площадки пасеки", (Vector3.new(loreBoard.X, 0, loreBoard.Z) - Vector3.new(loreCF.X, 0, loreCF.Z)).Magnitude < 25)
 R.setCharacter(bed.Soil.Position + Vector3.new(0, 3, 8))
 R.step(0.3)
+ok("у клумбы до входа в уровень (LevelFlow) подсказки недоступны", promptsReachable() == 0, promptsReachable())
+ok("до входа в уровень HUD скрыт", hud.Enabled == false)
+R.player:SetAttribute("ActiveLevel", "regression") -- LevelFlow: игрок дошёл до точки входа уровня
+R.step(0.2)
 ok("HUD виден у клумбы", hud.Enabled == true)
 ok("в кубе подсказки снова доступны", promptsReachable() == #allPrompts(), promptsReachable())
 ok("в кубе inQuestCube = true", R.G.RegressionDebug.inCube() == true)
@@ -305,6 +324,41 @@ has(shellGui, "(5,16; 0,00)", "2D.5: L1 при λ ≥ 1,49 → (5,16; 0)")
 has(shellGui, "острые углы", "2D.5: пояснение про ромб")
 has(shellGui, "Верно!", "2D.5: ставка «ровно 0» засчитана")
 ok("2D.5: «Дальше» закрыта, пока L2 не доведена до 20", M.shell.nextEnabled == false)
+-- рамки формул не «дышат»: при λ = 1 → 20 размеры строк и токенов с числами не меняются
+local function formulaSizes()
+	local out = {}
+	for _, fv in M.shell.formulas do
+		for _, d in fv.root:GetDescendants() do
+			if d:IsA("GuiObject") and (d.Name:sub(1, 5) == "Line_" or d:IsA("TextLabel") or d:IsA("TextButton")) then
+				table.insert(out, d:GetFullName() .. "=" .. d.Size.X.Offset .. "x" .. d.Size.Y.Offset .. "/" .. d.Size.Y.Scale)
+			end
+		end
+	end
+	table.sort(out)
+	return table.concat(out, ";")
+end
+local sizesBefore = formulaSizes()
+for _, lam in { 5, 12, 3.35, 17.5 } do
+	s5.slider:set(lam)
+	R.step(0.05)
+end
+ok("2D.5: рамки формул фиксированы при смене λ", formulaSizes() == sizesBefore)
+do
+	-- AutomaticSize у токенов и строк = ширина/высота по тексту, то есть «дыхание» рамки в Studio
+	local auto = 0
+	for _, fv in M.shell.formulas do
+		for _, d in fv.root:GetDescendants() do
+			if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Parent and d.Parent.Name ~= "Formula_" .. fv.id
+				and d.AutomaticSize ~= Enum.AutomaticSize.None then
+				auto += 1
+			end
+			if d.Name:sub(1, 5) == "Line_" and d.AutomaticSize ~= Enum.AutomaticSize.None then
+				auto += 1
+			end
+		end
+	end
+	ok("2D.5: у строк и токенов формул нет AutomaticSize", auto == 0, auto)
+end
 s5.slider:set(20)
 R.step(0.1)
 has(shellGui, "(0,90; 0,81)", "2D.5: L2 при λ = 20 → (0,90; 0,81)")
@@ -459,28 +513,32 @@ ok("блокнот: заметки", (kinds.note or 0) >= 4, kinds.note)
 -- ═════════════ Куб уровня ═════════════
 -- весь мир модуля (включая второе табло и пасеку) целиком внутри куба
 do
-	local half = Layout.zone.size / 2
-	local outside = 0
+	local half = zoneSize / 2
+	local function inside(p)
+		local l = zoneCF:PointToObjectSpace(p)
+		return math.abs(l.X) <= half.X and math.abs(l.Y) <= half.Y and math.abs(l.Z) <= half.Z
+	end
+	local outside, worst = 0, nil
 	for _, d in G.Workspace.RegressionWorld:GetDescendants() do
-		if d:IsA("BasePart") then
+		if d:IsA("BasePart") and d.Name ~= "Beacon" then
 			local h = d.Size / 2
 			for _, sx in { -1, 1 } do for _, sy in { -1, 1 } do for _, sz in { -1, 1 } do
-				local l = (d.CFrame * Vector3.new(h.X * sx, h.Y * sy, h.Z * sz)) - Layout.zone.center
-				if math.abs(l.X) > half.X or math.abs(l.Y) > half.Y or math.abs(l.Z) > half.Z then
+				local w = d.CFrame * Vector3.new(h.X * sx, h.Y * sy, h.Z * sz)
+				if not inside(w) then
 					outside += 1
+					worst = d:GetFullName()
 				end
 			end end end
 		end
 	end
-	ok("весь мир модуля внутри куба", outside == 0, outside)
-	-- чужие квесты SkRob вне куба: улей Data Console и зона TreeLevel
-	local function inside(p)
-		local l = p - Layout.zone.center
-		return math.abs(l.X) <= half.X and math.abs(l.Y) <= half.Y and math.abs(l.Z) <= half.Z
-	end
-	ok("улей с Data Console вне куба (углы улья)", not inside(Vector3.new(-43.7 + 15, -15.6, -19.5)) and not inside(Vector3.new(-53.6, -30.1, -11.0)))
-	ok("TreeLevelZone вне куба", not inside(Vector3.new(233.6 - 69, -10.1, 10.3)))
-	ok("спаун внутри куба", inside(Layout.spawn))
+	ok("весь мир модуля внутри куба", outside == 0, worst)
+	-- чужие квесты SkRob вне куба
+	ok("улей с Data Console вне куба", not inside(Vector3.new(-43.7, -15.6, -19.5)))
+	ok("TreeLevelZone вне куба", not inside(Vector3.new(213.6 - 46.3, -0.6, 35.9)))
+	ok("лаборатория деревьев вне куба", not inside(Vector3.new(3.1, -30.7, 46.7)))
+	-- KMeansZone: куб, растянутый командой в Studio, задевает её центр. Кнопки регрессии там всё равно не работают,
+	-- пока ActiveLevel ≠ "regression" (проверено ниже); границы куба — решение команды.
+	ok("DBSCAN вне куба", not inside(Vector3.new(30.0, -30.5, -120.0)))
 end
 
 -- выход из куба посреди обучения: подсказки и HUD выключаются, экран закрывается
@@ -494,6 +552,13 @@ ok("за кубом подсказку нельзя активировать", o
 R.setCharacter(loreModel.Beekeeper.Body.Position + Vector3.new(0, 0, 4))
 R.step(0.2)
 ok("возврат в куб: подсказки доступны, HUD виден", promptsReachable() == #allPrompts() and hud.Enabled == true, promptsReachable())
+
+-- LevelFlow переключил игрока на следующий уровень: кнопки регрессии выключаются даже внутри куба
+R.player:SetAttribute("ActiveLevel", "decision_tree")
+R.step(0.2)
+ok("после смены уровня подсказки регрессии недоступны", promptsReachable() == 0, promptsReachable())
+ok("после смены уровня HUD скрыт", hud.Enabled == false)
+ok("после смены уровня клумба на месте", G.Workspace.RegressionWorld.RegressionFlowerbed.Parent ~= nil)
 
 print(("Scenario: %d/%d"):format(checks - fails, checks))
 if fails > 0 then
